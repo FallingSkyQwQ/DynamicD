@@ -1,21 +1,31 @@
 package icu.aetherland.dynamicd.compiler
 
 import java.io.File
+import kotlin.system.measureTimeMillis
 
 object CompilerFacade {
-    fun compileModule(moduleId: String, moduleDir: File): CompileResult {
+    private val incrementalCache = IncrementalCompilerCache()
+
+    fun compileModule(
+        moduleId: String,
+        moduleDir: File,
+        mode: CompileMode = CompileMode.FULL,
+    ): CompileResult {
         val sourceFiles = moduleDir.walkTopDown()
             .filter { it.isFile && it.extension == "yuz" }
+            .sortedBy { it.absolutePath }
             .toList()
 
         if (sourceFiles.isEmpty()) {
             return failure(
                 moduleId = moduleId,
                 code = "E0100",
+                stage = DiagnosticStage.PARSER,
                 message = "No .yuz files found for module",
                 file = "${moduleDir.name}/",
                 line = 1,
                 column = 1,
+                mode = mode,
             )
         }
 
@@ -26,18 +36,65 @@ object CompilerFacade {
         val allTimers = mutableListOf<String>()
         val allPlaceholders = mutableListOf<String>()
         val requiredIntegrations = mutableSetOf<String>()
+        val exportedFunctions = mutableListOf<String>()
 
-        sourceFiles.forEach { file ->
-            val source = file.readText()
-            val stageDiagnostics = runChecks(file, source)
-            diagnostics.addAll(stageDiagnostics)
-            val ast = Parser.parse(source)
-            allEvents.addAll(ast.declarations.filterIsInstance<EventDeclaration>().map { it.eventPath })
-            allCommands.addAll(ast.declarations.filterIsInstance<CommandDeclaration>().map { it.raw })
-            allPermissions.addAll(ast.declarations.filterIsInstance<PermissionDeclaration>().map { it.node })
-            allTimers.addAll(ast.declarations.filterIsInstance<TimerDeclaration>().map { "${it.timerType}:${it.durationLiteral}" })
-            allPlaceholders.addAll(extractPlaceholders(source))
-            requiredIntegrations.addAll(extractIntegrations(source))
+        var filesCompiled = 0
+        var filesReused = 0
+        val elapsed = measureTimeMillis {
+            sourceFiles.forEach { file ->
+                val source = file.readText()
+                val hash = incrementalCache.hash(source)
+                val cached = if (mode == CompileMode.INCREMENTAL) incrementalCache.get(file, hash) else null
+                if (cached != null) {
+                    filesReused++
+                    diagnostics.addAll(cached.diagnostics)
+                    allEvents.addAll(cached.events)
+                    allCommands.addAll(cached.commands)
+                    allPermissions.addAll(cached.permissions)
+                    allTimers.addAll(cached.timers)
+                    allPlaceholders.addAll(cached.placeholders)
+                    requiredIntegrations.addAll(cached.integrations)
+                    exportedFunctions.addAll(cached.exportedFunctions)
+                    return@forEach
+                }
+
+                filesCompiled++
+                val stageDiagnostics = runChecks(file, source)
+                diagnostics.addAll(stageDiagnostics)
+                val ast = Parser.parse(source)
+                val events = ast.declarations.filterIsInstance<EventDeclaration>().map { it.eventPath }
+                val commands = ast.declarations.filterIsInstance<CommandDeclaration>().map { it.raw }
+                val permissions = ast.declarations.filterIsInstance<PermissionDeclaration>().map { it.node }
+                val timers = ast.declarations.filterIsInstance<TimerDeclaration>().map { "${it.timerType}:${it.durationLiteral}" }
+                val placeholders = extractPlaceholders(source)
+                val integrations = extractIntegrations(source)
+                val functions = extractExportedFunctions(source)
+
+                allEvents.addAll(events)
+                allCommands.addAll(commands)
+                allPermissions.addAll(permissions)
+                allTimers.addAll(timers)
+                allPlaceholders.addAll(placeholders)
+                requiredIntegrations.addAll(integrations)
+                exportedFunctions.addAll(functions)
+
+                incrementalCache.put(
+                    moduleId,
+                    file,
+                    hash,
+                    CachedFileAnalysis(
+                        hash = hash,
+                        events = events,
+                        commands = commands,
+                        permissions = permissions,
+                        timers = timers,
+                        placeholders = placeholders,
+                        integrations = integrations,
+                        diagnostics = stageDiagnostics,
+                        exportedFunctions = functions,
+                    ),
+                )
+            }
         }
 
         val success = diagnostics.none { it.level == DiagnosticLevel.ERROR }
@@ -53,16 +110,55 @@ object CompilerFacade {
                 placeholders = allPlaceholders.distinct(),
                 requiredIntegrations = requiredIntegrations,
             ),
+            symbolIndex = SymbolIndex(
+                moduleId = moduleId,
+                exportedFunctions = exportedFunctions.distinct(),
+                events = allEvents.distinct(),
+                commands = allCommands.distinct(),
+            ),
+            metrics = CompileMetrics(
+                mode = mode,
+                totalMillis = elapsed,
+                filesCompiled = filesCompiled,
+                filesReused = filesReused,
+            ),
         )
+    }
+
+    fun diagnose(moduleId: String, moduleDir: File, mode: CompileMode = CompileMode.INCREMENTAL): List<Diagnostic> {
+        return compileModule(moduleId, moduleDir, mode).diagnostics
+    }
+
+    fun buildSymbolIndex(moduleId: String, moduleDir: File, mode: CompileMode = CompileMode.INCREMENTAL): SymbolIndex {
+        return compileModule(moduleId, moduleDir, mode).symbolIndex
+    }
+
+    fun clearModuleCache(moduleId: String) {
+        incrementalCache.clearModule(moduleId)
     }
 
     private fun runChecks(file: File, source: String): List<Diagnostic> {
         val diagnostics = mutableListOf<Diagnostic>()
 
-        Lexer.tokenize(source) // lexical pass placeholder
+        try {
+            Lexer.tokenize(source)
+        } catch (ex: Exception) {
+            diagnostics += Diagnostic(
+                code = "E0001",
+                level = DiagnosticLevel.ERROR,
+                stage = DiagnosticStage.LEXER,
+                message = ex.message ?: "Lexer failure",
+                file = file.name,
+                line = 1,
+                column = 1,
+                contextSnippet = source.lines().firstOrNull(),
+                suggestion = "Check illegal token characters",
+            )
+            return diagnostics
+        }
+
         val lines = source.lines()
 
-        // DD-YUZ-002: naive nullable misuse check for Player?
         val nullablePlayerVars = mutableMapOf<String, Int>()
         lines.forEachIndexed { i, raw ->
             val line = raw.trim()
@@ -86,6 +182,7 @@ object CompilerFacade {
                         Diagnostic(
                             code = "E0401",
                             level = DiagnosticLevel.ERROR,
+                            stage = DiagnosticStage.TYPE,
                             message = "Nullable Player must be checked before member access",
                             file = file.name,
                             line = idx + 1,
@@ -93,13 +190,13 @@ object CompilerFacade {
                             expected = "Player non-null",
                             actual = "Player?",
                             suggestion = "Add `guard $name != null else { return }` before access",
+                            contextSnippet = raw,
                         ),
                     )
                 }
             }
         }
 
-        // DD-YUZ-005: effect check for async block using sync-only API
         var asyncDepth = 0
         lines.forEachIndexed { i, raw ->
             val line = raw.trim()
@@ -111,6 +208,7 @@ object CompilerFacade {
                     Diagnostic(
                         code = "E0500",
                         level = DiagnosticLevel.ERROR,
+                        stage = DiagnosticStage.EFFECT,
                         message = "sync-only API call in async context",
                         file = file.name,
                         line = i + 1,
@@ -118,6 +216,7 @@ object CompilerFacade {
                         expected = "sync block",
                         actual = "async block",
                         suggestion = "Wrap call with `sync { ... }`",
+                        contextSnippet = raw,
                     ),
                 )
             }
@@ -132,10 +231,12 @@ object CompilerFacade {
     private fun failure(
         moduleId: String,
         code: String,
+        stage: DiagnosticStage,
         message: String,
         file: String,
         line: Int,
         column: Int,
+        mode: CompileMode,
     ): CompileResult {
         return CompileResult(
             moduleId = moduleId,
@@ -144,10 +245,12 @@ object CompilerFacade {
                 Diagnostic(
                     code = code,
                     level = DiagnosticLevel.ERROR,
+                    stage = stage,
                     message = message,
                     file = file,
                     line = line,
                     column = column,
+                    contextSnippet = null,
                 ),
             ),
             registry = CompileRegistry(
@@ -158,6 +261,8 @@ object CompilerFacade {
                 placeholders = emptyList(),
                 requiredIntegrations = emptySet(),
             ),
+            symbolIndex = SymbolIndex(moduleId, emptyList(), emptyList(), emptyList()),
+            metrics = CompileMetrics(mode = mode, totalMillis = 0, filesCompiled = 0, filesReused = 0),
         )
     }
 
@@ -194,5 +299,17 @@ object CompilerFacade {
             found += "Vault"
         }
         return found
+    }
+
+    private fun extractExportedFunctions(source: String): List<String> {
+        val result = mutableListOf<String>()
+        source.lines().forEach { raw ->
+            val line = raw.trim()
+            val m = Regex("(export\\s+)?fn\\s+(\\w+)\\s*\\(").find(line)
+            if (m != null) {
+                result += m.groupValues[2]
+            }
+        }
+        return result
     }
 }

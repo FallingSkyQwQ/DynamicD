@@ -16,6 +16,8 @@ dependencies {
     compileOnly("io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT")
     compileOnly("me.clip:placeholderapi:2.11.6")
     compileOnly("net.luckperms:api:5.4")
+    implementation("org.xerial:sqlite-jdbc:3.46.1.3")
+    implementation("com.github.ben-manes.caffeine:caffeine:3.1.8")
 
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")

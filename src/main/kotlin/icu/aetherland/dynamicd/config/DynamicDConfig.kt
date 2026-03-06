@@ -38,6 +38,9 @@ data class IntegrationConfig(
 
 data class SecurityConfig(
     val defaultSandboxLevel: SandboxLevel,
+    val cpuSteps: Long,
+    val maxTasks: Int,
+    val ioQuota: Long,
 )
 
 data class DynamicDConfig(
@@ -77,6 +80,9 @@ data class DynamicDConfig(
                     defaultSandboxLevel = parseSandbox(
                         config.getString("security.default-sandbox-level", "TRUSTED").orEmpty(),
                     ),
+                    cpuSteps = config.getLong("security.resource.cpu-steps", 1_000_000L),
+                    maxTasks = config.getInt("security.resource.max-tasks", 200),
+                    ioQuota = config.getLong("security.resource.io-quota", 10_000_000L),
                 ),
             )
         }

@@ -4,6 +4,7 @@ import icu.aetherland.dynamicd.agent.AgentToolchain
 import icu.aetherland.dynamicd.audit.AuditLogger
 import icu.aetherland.dynamicd.integration.InMemoryPlaceholderRegistrar
 import icu.aetherland.dynamicd.integration.IntegrationRegistry
+import icu.aetherland.dynamicd.persist.PersistStore
 import icu.aetherland.dynamicd.ops.SnapshotManager
 import icu.aetherland.dynamicd.runtime.ListenerHandle
 import icu.aetherland.dynamicd.runtime.RuntimeBridge
@@ -102,6 +103,21 @@ class ModuleManagerTest {
     }
 
     @Test
+    fun `rollback latest usable snapshot works`() {
+        val env = testEnv(
+            "a" to """module "dynamicd:a" on player join { }""",
+        )
+        val perms = AgentToolchain.SYSTEM_PERMISSIONS
+        env.manager.compileModule("a", "tester", perms)
+        env.manager.loadModule("a", "tester", perms)
+        val snapshotId = env.manager.createSnapshot("tester", perms)
+        assertNotNull(snapshotId)
+        env.manager.unloadModule("a", "tester")
+        assertTrue(env.manager.rollbackLatestUsable("tester", perms))
+        assertEquals(ModuleState.ENABLED, env.manager.moduleState("a"))
+    }
+
+    @Test
     fun `dangerous command requires dangerous permission`() {
         val env = testEnv("m1" to """module "dynamicd:m1"""")
         val withoutDanger = setOf("dynamicd.agent.command")
@@ -137,6 +153,7 @@ class ModuleManagerTest {
             securityPolicy = SecurityPolicy(),
             defaultSandboxLevel = SandboxLevel.ADMIN,
             logger = {},
+            persistStore = PersistStore(File(root, "persist.db")),
         )
         manager.discoverModules()
         return Env(manager, runtime, auditFile)

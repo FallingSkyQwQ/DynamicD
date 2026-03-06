@@ -83,7 +83,10 @@ class DynamicDCommand(
             }
             "compile" -> withModuleArg(sender, args) { moduleId ->
                 val result = moduleManager.compileModule(moduleId, operator, permissions)
-                sender.sendMessage("compile $moduleId => ${result.success}")
+                sender.sendMessage(
+                    "compile $moduleId => ${result.success} mode=${result.metrics.mode} " +
+                        "compiled=${result.metrics.filesCompiled} reused=${result.metrics.filesReused} ms=${result.metrics.totalMillis}",
+                )
                 result.diagnostics.forEach {
                     sender.sendMessage("[${it.code}] ${it.message} (${it.file}:${it.line}:${it.column})")
                 }

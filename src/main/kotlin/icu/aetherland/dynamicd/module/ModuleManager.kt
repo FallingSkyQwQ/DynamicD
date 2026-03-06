@@ -2,17 +2,26 @@ package icu.aetherland.dynamicd.module
 
 import icu.aetherland.dynamicd.agent.AgentToolAction
 import icu.aetherland.dynamicd.agent.AgentToolchain
+import icu.aetherland.dynamicd.agent.patch.AstPatchEngine
+import icu.aetherland.dynamicd.agent.patch.PatchRequest
 import icu.aetherland.dynamicd.compiler.CompileRegistry
 import icu.aetherland.dynamicd.compiler.CompileResult
+import icu.aetherland.dynamicd.compiler.CompileMode
 import icu.aetherland.dynamicd.compiler.CompilerFacade
 import icu.aetherland.dynamicd.compiler.Diagnostic
 import icu.aetherland.dynamicd.compiler.DiagnosticLevel
+import icu.aetherland.dynamicd.compiler.DiagnosticStage
 import icu.aetherland.dynamicd.integration.IntegrationRegistry
 import icu.aetherland.dynamicd.integration.PlaceholderRegistrar
 import icu.aetherland.dynamicd.integration.PlaceholderSpec
 import icu.aetherland.dynamicd.ops.SnapshotManager
+import icu.aetherland.dynamicd.persist.PersistEntry
+import icu.aetherland.dynamicd.persist.PersistStore
 import icu.aetherland.dynamicd.runtime.RuntimeBridge
 import icu.aetherland.dynamicd.security.Capability
+import icu.aetherland.dynamicd.security.CircuitBreaker
+import icu.aetherland.dynamicd.security.ResourceBudget
+import icu.aetherland.dynamicd.security.ResourceLimiter
 import icu.aetherland.dynamicd.security.SandboxLevel
 import icu.aetherland.dynamicd.security.SecurityDecision
 import icu.aetherland.dynamicd.security.SecurityPolicy
@@ -29,6 +38,12 @@ class ModuleManager(
     private val securityPolicy: SecurityPolicy,
     private val defaultSandboxLevel: SandboxLevel,
     private val logger: (String) -> Unit,
+    private val persistStore: PersistStore? = null,
+    private val resourceLimiter: ResourceLimiter = ResourceLimiter(
+        ResourceBudget(cpuSteps = 1_000_000, maxTasks = 200, ioQuota = 10_000_000),
+    ),
+    private val circuitBreaker: CircuitBreaker = CircuitBreaker(),
+    private val astPatchEngine: AstPatchEngine = AstPatchEngine(),
 ) {
     private val modules = mutableMapOf<String, ModuleDescriptor>()
     private val activeCommands = mutableMapOf<String, String>()
@@ -119,9 +134,29 @@ class ModuleManager(
         }
         val module = requireModule(moduleId)
         val file = module.directory.walkTopDown().firstOrNull { it.isFile && it.extension == "yuz" } ?: return false
-        val patchComment = "\n// agent patch: $instruction\n"
+        val astResult = astPatchEngine.apply(file, PatchRequest(instruction))
+        if (astResult.success) {
+            agentToolchain.recordAction(operator, AgentToolAction.PATCH, moduleId, "allowed:ast")
+            return true
+        }
+        val tokenPatched = tryTokenPatch(file, instruction)
+        if (tokenPatched) {
+            agentToolchain.recordAction(
+                operator,
+                AgentToolAction.PATCH,
+                moduleId,
+                "allowed:token_fallback reason=${astResult.conflictReason}",
+            )
+            return true
+        }
+        val patchComment = "\n// text patch fallback: $instruction\n"
         file.appendText(patchComment)
-        agentToolchain.recordAction(operator, AgentToolAction.PATCH, moduleId, "allowed:text_fallback")
+        agentToolchain.recordAction(
+            operator,
+            AgentToolAction.PATCH,
+            moduleId,
+            "allowed:text_fallback reason=${astResult.conflictReason}",
+        )
         return true
     }
 
@@ -236,7 +271,8 @@ class ModuleManager(
         }
 
         agentToolchain.recordAction(operator, AgentToolAction.COMPILE, moduleId, "requested")
-        val result = CompilerFacade.compileModule(moduleId, module.directory)
+        val mode = if (module.lastCompileResult == null) CompileMode.FULL else CompileMode.INCREMENTAL
+        val result = CompilerFacade.compileModule(moduleId, module.directory, mode)
         module.lastCompileResult = result
         module.state = if (result.success) ModuleState.COMPILED else ModuleState.PREPARED
         val decision = if (result.success) "allowed" else "denied:compile_error"
@@ -246,6 +282,11 @@ class ModuleManager(
 
     fun loadModule(moduleId: String, operator: String, grantedPermissions: Set<String>): Boolean {
         val module = requireModule(moduleId)
+        val cbState = circuitBreaker.state(moduleId)
+        if (cbState.tripped) {
+            logger("module=$moduleId circuit_open reason=${cbState.reason}")
+            return false
+        }
         val authorization = agentToolchain.authorize(AgentToolAction.LOAD, grantedPermissions)
         if (!authorization.allowed) {
             agentToolchain.recordAction(
@@ -291,6 +332,11 @@ class ModuleManager(
             }
 
             compileResult.registry.timers.forEach { spec ->
+                val budget = resourceLimiter.registerTask(moduleId)
+                if (!budget.allowed) {
+                    circuitBreaker.trip(moduleId, budget.missing ?: "task budget exceeded")
+                    throw IllegalStateException(budget.missing)
+                }
                 val task = runtimeBridge.bindTimer(moduleId, spec)
                 if (task != null) {
                     module.tasks.add(task)
@@ -314,6 +360,7 @@ class ModuleManager(
             }
             module.state = ModuleState.ENABLED
             module.lastRuntimeError = null
+            restorePersistState(moduleId)
             agentToolchain.recordAction(operator, AgentToolAction.LOAD, moduleId, "allowed")
             true
         } catch (ex: Exception) {
@@ -327,10 +374,12 @@ class ModuleManager(
 
     fun unloadModule(moduleId: String, operator: String): Boolean {
         val module = modules[moduleId] ?: return false
+        savePersistState(moduleId)
         unloadRuntimeBindings(module)
         module.activeCommands.forEach { cmd -> activeCommands.remove(cmd) }
         module.activeCommands.clear()
         module.state = ModuleState.DISABLED
+        resourceLimiter.reset(moduleId)
         agentToolchain.recordAction(operator, AgentToolAction.LOAD, moduleId, "unloaded at=${Instant.now()}")
         return true
     }
@@ -393,6 +442,11 @@ class ModuleManager(
         return true
     }
 
+    fun rollbackLatestUsable(operator: String, grantedPermissions: Set<String>): Boolean {
+        val latest = listSnapshots().lastOrNull() ?: return false
+        return rollback(latest, operator, grantedPermissions)
+    }
+
     private fun unloadRuntimeBindings(module: ModuleDescriptor) {
         module.tasks.forEach { task -> task.cancel() }
         module.tasks.clear()
@@ -408,6 +462,7 @@ class ModuleManager(
                 Diagnostic(
                     code = "E0900",
                     level = DiagnosticLevel.ERROR,
+                    stage = DiagnosticStage.SECURITY,
                     message = "Permission denied for compile action",
                     file = moduleId,
                     line = 1,
@@ -425,6 +480,18 @@ class ModuleManager(
                 placeholders = emptyList(),
                 requiredIntegrations = emptySet(),
             ),
+            symbolIndex = icu.aetherland.dynamicd.compiler.SymbolIndex(
+                moduleId = moduleId,
+                exportedFunctions = emptyList(),
+                events = emptyList(),
+                commands = emptyList(),
+            ),
+            metrics = icu.aetherland.dynamicd.compiler.CompileMetrics(
+                mode = CompileMode.FULL,
+                totalMillis = 0,
+                filesCompiled = 0,
+                filesReused = 0,
+            ),
         )
     }
 
@@ -441,5 +508,60 @@ class ModuleManager(
         val lowered = command.trim().lowercase()
         val head = lowered.split(" ").firstOrNull().orEmpty()
         return head in setOf("op", "deop", "stop", "restart", "reload", "lp", "luckperms")
+    }
+
+    private fun savePersistState(moduleId: String) {
+        val store = persistStore ?: return
+        val module = modules[moduleId] ?: return
+        val keys = discoverPersistKeys(module.directory)
+        keys.forEach { key ->
+            store.upsert(
+                PersistEntry(
+                    moduleId = moduleId,
+                    key = key,
+                    value = "persist:$key",
+                    schemaVersion = 1,
+                ),
+            )
+        }
+    }
+
+    private fun restorePersistState(moduleId: String) {
+        val store = persistStore ?: return
+        val entries = store.getModuleState(moduleId)
+        if (entries.isNotEmpty()) {
+            logger("module=$moduleId persist_restored=${entries.size}")
+        }
+    }
+
+    private fun discoverPersistKeys(moduleDir: File): List<String> {
+        val keys = mutableListOf<String>()
+        moduleDir.walkTopDown()
+            .filter { it.isFile && it.extension == "yuz" }
+            .forEach { file ->
+                file.readLines().forEach { raw ->
+                    val line = raw.trim()
+                    val m = Regex("persist\\s+(\\w+)\\s*:").find(line)
+                    if (m != null) {
+                        keys += m.groupValues[1]
+                    }
+                }
+            }
+        return keys.distinct()
+    }
+
+    private fun tryTokenPatch(file: File, instruction: String): Boolean {
+        val source = file.readText()
+        val payload = instruction.removePrefix("replace ").split("=>", limit = 2)
+        if (payload.size != 2) {
+            return false
+        }
+        val from = payload[0].trim()
+        val to = payload[1].trim()
+        if (from.isBlank() || from !in source) {
+            return false
+        }
+        file.writeText(source.replace(from, to))
+        return true
     }
 }

@@ -1,5 +1,17 @@
 package icu.aetherland.dynamicd.compiler
 
+enum class CompileMode {
+    FULL,
+    INCREMENTAL,
+}
+
+data class CompileMetrics(
+    val mode: CompileMode,
+    val totalMillis: Long,
+    val filesCompiled: Int,
+    val filesReused: Int,
+)
+
 data class CompileRegistry(
     val events: List<String>,
     val commands: List<String>,
@@ -9,10 +21,19 @@ data class CompileRegistry(
     val requiredIntegrations: Set<String>,
 )
 
+data class SymbolIndex(
+    val moduleId: String,
+    val exportedFunctions: List<String>,
+    val events: List<String>,
+    val commands: List<String>,
+)
+
 data class CompileResult(
     val moduleId: String,
     val success: Boolean,
     val diagnostics: List<Diagnostic>,
     val registry: CompileRegistry,
+    val symbolIndex: SymbolIndex,
+    val metrics: CompileMetrics,
     val strategyLevel: String = "AST",
 )
