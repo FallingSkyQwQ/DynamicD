@@ -57,7 +57,7 @@
 - Folia 预适配
   - Implementation: runtime `TaskScheduler` abstraction + reflective `FoliaScheduler` + Bukkit fallback.
 - 生产压测结论基础能力
-  - Implementation: `BenchService` and `/dd bench run|report|suite` with scenarios (`standard/mixed/soak`) and metrics (cold/warm compile, reload latency, incremental reuse ratio, reload success rate, synthetic event throughput, agent success rate, soak samples, soak stage snapshots `start/mid/end`, failure sample/count, success trend delta), plus multi-module suite aggregation report (`failedModuleCount`, `failureBuckets`).
+  - Implementation: `BenchService` and `/dd bench run|report|suite` with scenarios (`standard/mixed/soak`) and metrics (cold/warm compile, reload latency, incremental reuse ratio, reload success rate, reload P95/P99, synthetic event throughput, agent success rate, soak samples, soak stage snapshots `start/mid/end`, failure sample/count, success trend delta, verdict), plus multi-module suite aggregation report (`failedModuleCount`, `failureBuckets`, aggregated P95/P99, verdict).
   - Tests: `BenchServiceTest.runs and persists benchmark report`, `AgentServiceTest.service persists session logs`.
 
 ## Alignment Notes

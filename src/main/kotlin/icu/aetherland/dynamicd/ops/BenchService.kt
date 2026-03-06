@@ -21,6 +21,8 @@ data class BenchReport(
     val reloadAvgMs: Long,
     val incrementalReuseRatio: Double,
     val reloadSuccessRate: Double,
+    val reloadP95Ms: Long,
+    val reloadP99Ms: Long,
     val eventThroughputPerSec: Double,
     val agentSuccessRate: Double,
     val soakSamples: Int,
@@ -30,6 +32,7 @@ data class BenchReport(
     val failureSample: String?,
     val failureCount: Int,
     val reloadSuccessTrendDelta: Double,
+    val verdict: String,
 )
 
 data class BenchSuiteReport(
@@ -39,11 +42,14 @@ data class BenchSuiteReport(
     val avgCompileWarmMs: Long,
     val avgReloadMs: Long,
     val avgReloadSuccessRate: Double,
+    val avgReloadP95Ms: Long,
+    val avgReloadP99Ms: Long,
     val avgEventThroughputPerSec: Double,
     val failedModules: List<String>,
     val failedModuleCount: Int,
     val failureBuckets: Map<String, Int>,
     val avgReloadSuccessTrendDelta: Double,
+    val verdict: String,
 )
 
 class BenchService(
@@ -70,6 +76,7 @@ class BenchService(
         var reuseNumerator = 0
         var reuseDenominator = 0
         var eventCountTotal = 0
+        val reloadSamples = mutableListOf<Long>()
         var soakSamples = 0
         var soakStartReloadMs = 0L
         var soakMidReloadMs = 0L
@@ -102,6 +109,7 @@ class BenchService(
             }
             val reloadMs = elapsedMs(reloadStart)
             reloadTotal += reloadMs
+            reloadSamples += reloadMs
             if (!ok) {
                 failureSamples += "reload_failed:iter=$runIndex"
             }
@@ -118,6 +126,8 @@ class BenchService(
         val secondHalfTotal = safeIterations - split
         val firstRate = if (firstHalfTotal <= 0) 0.0 else firstHalfSuccess.toDouble() / firstHalfTotal.toDouble()
         val secondRate = if (secondHalfTotal <= 0) 0.0 else secondHalfSuccess.toDouble() / secondHalfTotal.toDouble()
+        val p95 = percentile(reloadSamples, 0.95)
+        val p99 = percentile(reloadSamples, 0.99)
 
         val report = BenchReport(
             moduleId = moduleId,
@@ -128,6 +138,8 @@ class BenchService(
             reloadAvgMs = reloadTotal / safeIterations,
             incrementalReuseRatio = if (reuseDenominator == 0) 0.0 else reuseNumerator.toDouble() / reuseDenominator.toDouble(),
             reloadSuccessRate = reloadSuccess.toDouble() / safeIterations.toDouble(),
+            reloadP95Ms = p95,
+            reloadP99Ms = p99,
             eventThroughputPerSec = throughput,
             agentSuccessRate = stats.successRate,
             soakSamples = soakSamples,
@@ -137,6 +149,7 @@ class BenchService(
             failureSample = failureSamples.firstOrNull(),
             failureCount = failureSamples.size,
             reloadSuccessTrendDelta = secondRate - firstRate,
+            verdict = computeVerdict(reloadSuccess.toDouble() / safeIterations.toDouble(), failureSamples.size, p99),
         )
         write(report)
         return report
@@ -160,6 +173,8 @@ class BenchService(
         val reloadAvgMs = values["reloadAvgMs"]?.toLongOrNull() ?: return null
         val incrementalReuseRatio = values["incrementalReuseRatio"]?.toDoubleOrNull() ?: return null
         val reloadSuccessRate = values["reloadSuccessRate"]?.toDoubleOrNull() ?: return null
+        val reloadP95Ms = values["reloadP95Ms"]?.toLongOrNull() ?: return null
+        val reloadP99Ms = values["reloadP99Ms"]?.toLongOrNull() ?: return null
         val eventThroughputPerSec = values["eventThroughputPerSec"]?.toDoubleOrNull() ?: return null
         val agentSuccessRate = values["agentSuccessRate"]?.toDoubleOrNull() ?: return null
         val soakSamples = values["soakSamples"]?.toIntOrNull() ?: return null
@@ -169,6 +184,7 @@ class BenchService(
         val failureSample = values["failureSample"]?.takeIf { it != "null" }
         val failureCount = values["failureCount"]?.toIntOrNull() ?: return null
         val reloadSuccessTrendDelta = values["reloadSuccessTrendDelta"]?.toDoubleOrNull() ?: return null
+        val verdict = values["verdict"] ?: return null
         return BenchReport(
             moduleId,
             iterations,
@@ -178,6 +194,8 @@ class BenchService(
             reloadAvgMs,
             incrementalReuseRatio,
             reloadSuccessRate,
+            reloadP95Ms,
+            reloadP99Ms,
             eventThroughputPerSec,
             agentSuccessRate,
             soakSamples,
@@ -187,6 +205,7 @@ class BenchService(
             failureSample,
             failureCount,
             reloadSuccessTrendDelta,
+            verdict,
         )
     }
 
@@ -201,11 +220,14 @@ class BenchService(
                 avgCompileWarmMs = 0,
                 avgReloadMs = 0,
                 avgReloadSuccessRate = 0.0,
+                avgReloadP95Ms = 0,
+                avgReloadP99Ms = 0,
                 avgEventThroughputPerSec = 0.0,
                 failedModules = emptyList(),
                 failedModuleCount = 0,
                 failureBuckets = emptyMap(),
                 avgReloadSuccessTrendDelta = 0.0,
+                verdict = "NO_DATA",
             )
             writeSuite(empty)
             return empty
@@ -225,11 +247,18 @@ class BenchService(
             avgCompileWarmMs = reports.map { it.compileWarmAvgMs }.average().toLong(),
             avgReloadMs = reports.map { it.reloadAvgMs }.average().toLong(),
             avgReloadSuccessRate = reports.map { it.reloadSuccessRate }.average(),
+            avgReloadP95Ms = reports.map { it.reloadP95Ms }.average().toLong(),
+            avgReloadP99Ms = reports.map { it.reloadP99Ms }.average().toLong(),
             avgEventThroughputPerSec = reports.map { it.eventThroughputPerSec }.average(),
             failedModules = failedModules,
             failedModuleCount = failedModules.size,
             failureBuckets = failureBuckets.toSortedMap(),
             avgReloadSuccessTrendDelta = reports.map { it.reloadSuccessTrendDelta }.average(),
+            verdict = computeVerdict(
+                reloadSuccessRate = reports.map { it.reloadSuccessRate }.average(),
+                failureCount = reports.sumOf { it.failureCount },
+                p99 = reports.map { it.reloadP99Ms }.average().toLong(),
+            ),
         )
         writeSuite(suite)
         return suite
@@ -251,9 +280,12 @@ class BenchService(
         val avgCompileWarmMs = values["avgCompileWarmMs"]?.toLongOrNull() ?: return null
         val avgReloadMs = values["avgReloadMs"]?.toLongOrNull() ?: return null
         val avgReloadSuccessRate = values["avgReloadSuccessRate"]?.toDoubleOrNull() ?: return null
+        val avgReloadP95Ms = values["avgReloadP95Ms"]?.toLongOrNull() ?: return null
+        val avgReloadP99Ms = values["avgReloadP99Ms"]?.toLongOrNull() ?: return null
         val avgEventThroughputPerSec = values["avgEventThroughputPerSec"]?.toDoubleOrNull() ?: return null
         val failedModuleCount = values["failedModuleCount"]?.toIntOrNull() ?: return null
         val avgReloadSuccessTrendDelta = values["avgReloadSuccessTrendDelta"]?.toDoubleOrNull() ?: return null
+        val verdict = values["verdict"] ?: return null
         val failedModules = values["failedModules"]
             ?.takeIf { it.isNotBlank() }
             ?.split(",")
@@ -280,11 +312,14 @@ class BenchService(
             avgCompileWarmMs = avgCompileWarmMs,
             avgReloadMs = avgReloadMs,
             avgReloadSuccessRate = avgReloadSuccessRate,
+            avgReloadP95Ms = avgReloadP95Ms,
+            avgReloadP99Ms = avgReloadP99Ms,
             avgEventThroughputPerSec = avgEventThroughputPerSec,
             failedModules = failedModules,
             failedModuleCount = failedModuleCount,
             failureBuckets = failureBuckets,
             avgReloadSuccessTrendDelta = avgReloadSuccessTrendDelta,
+            verdict = verdict,
         )
     }
 
@@ -299,6 +334,8 @@ class BenchService(
             reloadAvgMs=${report.reloadAvgMs}
             incrementalReuseRatio=${report.incrementalReuseRatio}
             reloadSuccessRate=${report.reloadSuccessRate}
+            reloadP95Ms=${report.reloadP95Ms}
+            reloadP99Ms=${report.reloadP99Ms}
             eventThroughputPerSec=${report.eventThroughputPerSec}
             agentSuccessRate=${report.agentSuccessRate}
             soakSamples=${report.soakSamples}
@@ -308,6 +345,7 @@ class BenchService(
             failureSample=${report.failureSample}
             failureCount=${report.failureCount}
             reloadSuccessTrendDelta=${report.reloadSuccessTrendDelta}
+            verdict=${report.verdict}
             """.trimIndent() + "\n",
         )
     }
@@ -321,14 +359,34 @@ class BenchService(
             avgCompileWarmMs=${report.avgCompileWarmMs}
             avgReloadMs=${report.avgReloadMs}
             avgReloadSuccessRate=${report.avgReloadSuccessRate}
+            avgReloadP95Ms=${report.avgReloadP95Ms}
+            avgReloadP99Ms=${report.avgReloadP99Ms}
             avgEventThroughputPerSec=${report.avgEventThroughputPerSec}
             failedModules=${report.failedModules.joinToString(",")}
             failedModuleCount=${report.failedModuleCount}
             failureBuckets=${report.failureBuckets.entries.joinToString(",") { "${it.key}:${it.value}" }}
             avgReloadSuccessTrendDelta=${report.avgReloadSuccessTrendDelta}
+            verdict=${report.verdict}
             """.trimIndent() + "\n",
         )
     }
 
     private fun elapsedMs(startNanos: Long): Long = (System.nanoTime() - startNanos) / 1_000_000
+
+    private fun percentile(values: List<Long>, percentile: Double): Long {
+        if (values.isEmpty()) return 0
+        val sorted = values.sorted()
+        val index = (((sorted.size - 1) * percentile).toInt()).coerceIn(0, sorted.size - 1)
+        return sorted[index]
+    }
+
+    private fun computeVerdict(
+        reloadSuccessRate: Double,
+        failureCount: Int,
+        p99: Long,
+    ): String {
+        if (failureCount == 0 && reloadSuccessRate >= 0.99 && p99 <= 250) return "PASS"
+        if (reloadSuccessRate >= 0.95 && p99 <= 500) return "WARN"
+        return "FAIL"
+    }
 }

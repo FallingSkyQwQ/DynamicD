@@ -349,11 +349,12 @@ class DynamicDCommand(
                 sender.sendMessage(
                     "bench module=${report.moduleId} scenario=${report.scenario} cold=${report.compileColdMs}ms warmAvg=${report.compileWarmAvgMs}ms " +
                         "reloadAvg=${report.reloadAvgMs}ms reuse=${"%.2f".format(report.incrementalReuseRatio)} " +
+                        "p95/p99=${report.reloadP95Ms}/${report.reloadP99Ms}ms " +
                         "reloadOk=${"%.2f".format(report.reloadSuccessRate)} events/s=${"%.2f".format(report.eventThroughputPerSec)} " +
                         "agentOk=${"%.2f".format(report.agentSuccessRate)} soakSamples=${report.soakSamples} " +
                         "soak[start/mid/end]=${report.soakStartReloadMs}/${report.soakMidReloadMs}/${report.soakEndReloadMs} " +
                         "failure=${report.failureSample ?: "none"} failCount=${report.failureCount} " +
-                        "trend=${"%.2f".format(report.reloadSuccessTrendDelta)}",
+                        "trend=${"%.2f".format(report.reloadSuccessTrendDelta)} verdict=${report.verdict}",
                 )
                 true
             }
@@ -364,10 +365,11 @@ class DynamicDCommand(
                 sender.sendMessage(
                         "bench suite scenario=${report.scenario} modules=${report.moduleCount} iterations=${report.iterations} " +
                             "warmAvg=${report.avgCompileWarmMs}ms reloadAvg=${report.avgReloadMs}ms " +
+                            "p95/p99=${report.avgReloadP95Ms}/${report.avgReloadP99Ms}ms " +
                             "reloadOk=${"%.2f".format(report.avgReloadSuccessRate)} events/s=${"%.2f".format(report.avgEventThroughputPerSec)} " +
                             "failed=${if (report.failedModules.isEmpty()) "none" else report.failedModules.joinToString(",")} " +
                             "failedCount=${report.failedModuleCount} buckets=${report.failureBuckets} " +
-                            "trend=${"%.2f".format(report.avgReloadSuccessTrendDelta)}",
+                            "trend=${"%.2f".format(report.avgReloadSuccessTrendDelta)} verdict=${report.verdict}",
                     )
                 true
             }
@@ -392,14 +394,15 @@ class DynamicDCommand(
                     return true
                 }
                 sender.sendMessage(
-                    "bench latest module=${report.moduleId} scenario=${report.scenario} iterations=${report.iterations} " +
+                        "bench latest module=${report.moduleId} scenario=${report.scenario} iterations=${report.iterations} " +
                     "cold=${report.compileColdMs}ms warmAvg=${report.compileWarmAvgMs}ms " +
                         "reloadAvg=${report.reloadAvgMs}ms reuse=${"%.2f".format(report.incrementalReuseRatio)} " +
+                        "p95/p99=${report.reloadP95Ms}/${report.reloadP99Ms}ms " +
                         "reloadOk=${"%.2f".format(report.reloadSuccessRate)} events/s=${"%.2f".format(report.eventThroughputPerSec)} " +
                         "agentOk=${"%.2f".format(report.agentSuccessRate)} soakSamples=${report.soakSamples} " +
                         "soak[start/mid/end]=${report.soakStartReloadMs}/${report.soakMidReloadMs}/${report.soakEndReloadMs} " +
                         "failure=${report.failureSample ?: "none"} failCount=${report.failureCount} " +
-                        "trend=${"%.2f".format(report.reloadSuccessTrendDelta)}",
+                        "trend=${"%.2f".format(report.reloadSuccessTrendDelta)} verdict=${report.verdict}",
                 )
                 true
             }

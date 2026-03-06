@@ -206,8 +206,8 @@ object SemanticAnalyzer {
     private fun checkMatchCoverage(file: File, source: String, ast: AstModule): List<Diagnostic> {
         val diagnostics = mutableListOf<Diagnostic>()
         val enumMap = ast.declarations.filterIsInstance<EnumDeclaration>().associateBy { it.name }
-        val inferredTypeMap = inferLocalTypes(file, ast)
-        val resultVars = inferResultVars(source)
+        val inferredTypeMap = inferLocalTypes(source, ast)
+        val resultVars = inferredTypeMap.filterValues { normalizeType(it).startsWith("Result<") }.keys
         ast.declarations.filterIsInstance<MatchDeclaration>().forEach { decl ->
             if (!decl.hasElseBranch && decl.caseCount == 0) {
                 diagnostics += Diagnostic(
@@ -334,15 +334,21 @@ object SemanticAnalyzer {
         return Regex("\\)\\s*\\?$|\\b\\w+\\s*\\?$").containsMatchIn(noComment.trim())
     }
 
-    private fun inferLocalTypes(file: File, ast: AstModule): Map<String, String> {
+    private fun inferLocalTypes(source: String, ast: AstModule): Map<String, String> {
         val knownEnums = ast.declarations.filterIsInstance<EnumDeclaration>().map { it.name }.toSet()
         val result = mutableMapOf<String, String>()
-        file.readLines().forEach { raw ->
+        source.lines().forEach { raw ->
             val line = raw.trim()
             val explicit = Regex("(let|var|state|persist)\\s+(\\w+)\\s*:\\s*([A-Za-z_][A-Za-z0-9_]*)")
                 .find(line)
             if (explicit != null) {
                 result[explicit.groupValues[2]] = explicit.groupValues[3]
+                return@forEach
+            }
+            val explicitGeneric = Regex("(let|var|state|persist)\\s+(\\w+)\\s*:\\s*([A-Za-z_][A-Za-z0-9_<>?,\\s]*)")
+                .find(line)
+            if (explicitGeneric != null) {
+                result[explicitGeneric.groupValues[2]] = normalizeType(explicitGeneric.groupValues[3])
                 return@forEach
             }
             val enumCtor = Regex("(let|var)\\s+(\\w+)\\s*=\\s*([A-Za-z_][A-Za-z0-9_]*)\\.[A-Za-z_][A-Za-z0-9_]*")
@@ -353,27 +359,22 @@ object SemanticAnalyzer {
                     result[enumCtor.groupValues[2]] = enumType
                 }
             }
+            val fnParams = Regex("fn\\s+\\w+\\s*\\(([^)]*)\\)").find(line)?.groupValues?.getOrNull(1)
+            if (!fnParams.isNullOrBlank()) {
+                fnParams.split(",").forEach { rawParam ->
+                    val p = rawParam.trim()
+                    val m = Regex("(\\w+)\\s*:\\s*([A-Za-z_][A-Za-z0-9_<>?,\\s]*)").find(p)
+                    if (m != null) {
+                        result[m.groupValues[1]] = normalizeType(m.groupValues[2])
+                    }
+                }
+            }
         }
         return result
     }
 
-    private fun inferResultVars(source: String): Set<String> {
-        val result = mutableSetOf<String>()
-        source.lines().forEach { raw ->
-            val line = raw.trim()
-            val typed = Regex("(let|var|state|persist)\\s+(\\w+)\\s*:\\s*Result<")
-                .find(line)
-            if (typed != null) {
-                result += typed.groupValues[2]
-                return@forEach
-            }
-            val inferred = Regex("(let|var)\\s+(\\w+)\\s*=\\s*(ok|err)\\s*\\(")
-                .find(line)
-            if (inferred != null) {
-                result += inferred.groupValues[2]
-            }
-        }
-        return result
+    private fun normalizeType(value: String): String {
+        return value.replace("\\s+".toRegex(), "")
     }
 
     private fun checkNullableGuards(file: File, source: String): List<Diagnostic> {
