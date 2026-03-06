@@ -34,6 +34,9 @@
   - Verification: runtime logs + command outputs.
 
 ## Phase3+ Maturity Items (from DD.txt)
+- yuz 前端重建（全规范级第一里程碑）
+  - Implementation: typed lexer (`TokenType`, block-comment/string diagnostics), parser扩展（`module/version/use/export fn/state/persist/placeholder`）, semantic analyzer entry (`module required`, duplicate symbol, nullable/effect checks).
+  - Tests: `LexerTest`, `CompilerFacadeTest.requires module declaration`, `CompilerFacadeTest.only exported functions are in symbol index`.
 - 模块依赖图可视化
   - Implementation: `ModuleManager.moduleDependencyGraph/moduleLoadOrder` + `/dd modules graph`.
   - Tests: `ModuleManagerTest.dependency graph and load order are built from use dynamicd imports`.

@@ -3,20 +3,73 @@ package icu.aetherland.dynamicd.compiler
 object Parser {
     fun parse(source: String): AstModule {
         var moduleName: String? = null
+        var versionLiteral: String? = null
         val declarations = mutableListOf<AstDeclaration>()
-        val lines = source.lines()
-
-        lines.forEach { raw ->
+        source.lines().forEach { raw ->
             val line = raw.trim()
             if (line.isBlank() || line.startsWith("//")) {
                 return@forEach
             }
+
             when {
                 line.startsWith("module ") -> {
                     moduleName = Regex("module\\s+\"([^\"]+)\"")
                         .find(line)
                         ?.groupValues
                         ?.getOrNull(1)
+                }
+                line.startsWith("version ") -> {
+                    versionLiteral = Regex("version\\s+\"([^\"]+)\"")
+                        .find(line)
+                        ?.groupValues
+                        ?.getOrNull(1)
+                }
+                line.startsWith("use ") -> {
+                    val path = Regex("use\\s+([^\\s]+)")
+                        .find(line)
+                        ?.groupValues
+                        ?.getOrNull(1)
+                    val alias = Regex("\\sas\\s+(\\w+)")
+                        .find(line)
+                        ?.groupValues
+                        ?.getOrNull(1)
+                    if (!path.isNullOrBlank()) {
+                        declarations += UseDeclaration(path = path, alias = alias)
+                    }
+                }
+                line.startsWith("export fn ") || line.startsWith("fn ") -> {
+                    val exported = line.startsWith("export fn ")
+                    val m = Regex("(export\\s+)?fn\\s+(\\w+)\\s*\\(").find(line)
+                    val fn = m?.groupValues?.getOrNull(2)
+                    if (!fn.isNullOrBlank()) {
+                        declarations += FunctionDeclaration(name = fn, exported = exported)
+                    }
+                }
+                line.startsWith("state ") || line.startsWith("persist ") -> {
+                    val persistent = line.startsWith("persist ")
+                    val m = Regex("(state|persist)\\s+(\\w+)\\s*:").find(line)
+                    val name = m?.groupValues?.getOrNull(2)
+                    if (!name.isNullOrBlank()) {
+                        declarations += StateDeclaration(name = name, persistent = persistent)
+                    }
+                }
+                line.startsWith("placeholder ") -> {
+                    val key = Regex("placeholder\\s+\"([^\"]+)\"")
+                        .find(line)
+                        ?.groupValues
+                        ?.getOrNull(1)
+                    if (!key.isNullOrBlank()) {
+                        declarations += PlaceholderDeclaration(namespace = null, key = key)
+                    }
+                }
+                line.startsWith("papi namespace ") -> {
+                    val namespace = Regex("papi\\s+namespace\\s+\"([^\"]+)\"")
+                        .find(line)
+                        ?.groupValues
+                        ?.getOrNull(1)
+                    if (!namespace.isNullOrBlank()) {
+                        declarations += PlaceholderDeclaration(namespace = namespace, key = "*")
+                    }
                 }
                 line.startsWith("on ") -> {
                     val path = line.removePrefix("on ").substringBefore(" where").substringBefore(" throttle")
@@ -55,6 +108,10 @@ object Parser {
             }
         }
 
-        return AstModule(moduleName = moduleName, declarations = declarations)
+        return AstModule(
+            moduleName = moduleName,
+            versionLiteral = versionLiteral,
+            declarations = declarations,
+        )
     }
 }

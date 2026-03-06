@@ -66,9 +66,9 @@ object CompilerFacade {
                 }
 
                 filesCompiled++
-                val stageDiagnostics = runChecks(file, source)
-                diagnostics.addAll(stageDiagnostics)
                 val ast = Parser.parse(source)
+                val stageDiagnostics = runChecks(file, source, ast)
+                diagnostics.addAll(stageDiagnostics)
                 val eventDecls = ast.declarations.filterIsInstance<EventDeclaration>()
                 val events = eventDecls.map { it.eventPath }
                 eventDecls.forEach { decl ->
@@ -84,10 +84,16 @@ object CompilerFacade {
                 val commands = ast.declarations.filterIsInstance<CommandDeclaration>().map { it.raw }
                 val permissions = ast.declarations.filterIsInstance<PermissionDeclaration>().map { it.node }
                 val timers = ast.declarations.filterIsInstance<TimerDeclaration>().map { "${it.timerType}:${it.durationLiteral}" }
-                val placeholders = extractPlaceholders(source)
-                val integrations = extractIntegrations(source)
-                val functions = extractExportedFunctions(source)
-                val deps = extractDependencies(source)
+                val placeholders = extractPlaceholders(ast)
+                val integrations = extractIntegrations(ast)
+                val functions = ast.declarations
+                    .filterIsInstance<FunctionDeclaration>()
+                    .filter { it.exported }
+                    .map { it.name }
+                val deps = ast.declarations.filterIsInstance<UseDeclaration>()
+                    .map { it.path }
+                    .filter { it.startsWith("dynamicd:") }
+                    .map { it.substringAfter("dynamicd:") }
 
                 allEvents.addAll(events)
                 allCommands.addAll(commands)
@@ -164,11 +170,24 @@ object CompilerFacade {
         incrementalCache.clearModule(moduleId)
     }
 
-    private fun runChecks(file: File, source: String): List<Diagnostic> {
+    private fun runChecks(file: File, source: String, ast: AstModule): List<Diagnostic> {
         val diagnostics = mutableListOf<Diagnostic>()
 
         try {
             Lexer.tokenize(source)
+        } catch (ex: LexerException) {
+            diagnostics += Diagnostic(
+                code = ex.code,
+                level = DiagnosticLevel.ERROR,
+                stage = DiagnosticStage.LEXER,
+                message = ex.message ?: "Lexer failure",
+                file = file.name,
+                line = ex.errorLine,
+                column = ex.errorColumn,
+                contextSnippet = source.lines().firstOrNull(),
+                suggestion = "Check illegal token characters",
+            )
+            return diagnostics
         } catch (ex: Exception) {
             diagnostics += Diagnostic(
                 code = "E0001",
@@ -183,75 +202,7 @@ object CompilerFacade {
             )
             return diagnostics
         }
-
-        val lines = source.lines()
-
-        val nullablePlayerVars = mutableMapOf<String, Int>()
-        lines.forEachIndexed { i, raw ->
-            val line = raw.trim()
-            val decl = Regex("(let|var)\\s+(\\w+)\\s*:\\s*Player\\?")
-                .find(line)
-            if (decl != null) {
-                nullablePlayerVars[decl.groupValues[2]] = i
-            }
-        }
-
-        nullablePlayerVars.forEach { (name, declIndex) ->
-            val guardRegex = Regex("guard\\s+$name\\s*!=\\s*null")
-            var guarded = false
-            lines.forEachIndexed { idx, raw ->
-                val line = raw.trim()
-                if (idx > declIndex && guardRegex.containsMatchIn(line)) {
-                    guarded = true
-                }
-                if (idx > declIndex && line.contains("$name.") && !guarded) {
-                    diagnostics.add(
-                        Diagnostic(
-                            code = "E0401",
-                            level = DiagnosticLevel.ERROR,
-                            stage = DiagnosticStage.TYPE,
-                            message = "Nullable Player must be checked before member access",
-                            file = file.name,
-                            line = idx + 1,
-                            column = line.indexOf("$name.") + 1,
-                            expected = "Player non-null",
-                            actual = "Player?",
-                            suggestion = "Add `guard $name != null else { return }` before access",
-                            contextSnippet = raw,
-                        ),
-                    )
-                }
-            }
-        }
-
-        var asyncDepth = 0
-        lines.forEachIndexed { i, raw ->
-            val line = raw.trim()
-            if (line.startsWith("async")) {
-                asyncDepth += line.count { it == '{' }.coerceAtLeast(1)
-            }
-            if (asyncDepth > 0 && Regex("\\b(teleport|title|broadcast|tell)\\b").containsMatchIn(line)) {
-                diagnostics.add(
-                    Diagnostic(
-                        code = "E0500",
-                        level = DiagnosticLevel.ERROR,
-                        stage = DiagnosticStage.EFFECT,
-                        message = "sync-only API call in async context",
-                        file = file.name,
-                        line = i + 1,
-                        column = 1,
-                        expected = "sync block",
-                        actual = "async block",
-                        suggestion = "Wrap call with `sync { ... }`",
-                        contextSnippet = raw,
-                    ),
-                )
-            }
-            if (line.contains("}")) {
-                asyncDepth = (asyncDepth - line.count { it == '}' }).coerceAtLeast(0)
-            }
-        }
-
+        diagnostics += SemanticAnalyzer.analyze(file, source, ast)
         return diagnostics
     }
 
@@ -301,68 +252,29 @@ object CompilerFacade {
         )
     }
 
-    private fun extractPlaceholders(source: String): List<String> {
-        val placeholders = mutableListOf<String>()
-        source.lines().forEach { raw ->
-            val line = raw.trim()
-            if (line.startsWith("placeholder ")) {
-                val name = Regex("placeholder\\s+\"([^\"]+)\"").find(line)?.groupValues?.getOrNull(1)
-                if (!name.isNullOrBlank()) {
-                    placeholders += name
-                }
-            }
-            if (line.startsWith("papi namespace ")) {
-                val namespace = Regex("papi\\s+namespace\\s+\"([^\"]+)\"").find(line)?.groupValues?.getOrNull(1)
-                if (!namespace.isNullOrBlank()) {
-                    placeholders += "$namespace:*"
-                }
+    private fun extractPlaceholders(ast: AstModule): List<String> {
+        return ast.declarations.filterIsInstance<PlaceholderDeclaration>().mapNotNull { decl ->
+            when {
+                !decl.namespace.isNullOrBlank() -> "${decl.namespace}:*"
+                !decl.key.isNullOrBlank() -> decl.key
+                else -> null
             }
         }
-        return placeholders
     }
 
-    private fun extractIntegrations(source: String): Set<String> {
+    private fun extractIntegrations(ast: AstModule): Set<String> {
         val found = mutableSetOf<String>()
-        val lowered = source.lowercase()
-        if ("papi " in lowered || "placeholder " in lowered) {
+        val usePaths = ast.declarations.filterIsInstance<UseDeclaration>().map { it.path.lowercase() }
+        val hasPlaceholderDecl = ast.declarations.any { it is PlaceholderDeclaration }
+        if (hasPlaceholderDecl || usePaths.any { it.contains("papi") || it.contains("placeholder") }) {
             found += "PlaceholderAPI"
         }
-        if ("luckperms." in lowered || "luckperms " in lowered) {
+        if (usePaths.any { it.contains("luckperms") }) {
             found += "LuckPerms"
         }
-        if ("vault." in lowered || "vault " in lowered) {
+        if (usePaths.any { it.contains("vault") }) {
             found += "Vault"
         }
         return found
-    }
-
-    private fun extractExportedFunctions(source: String): List<String> {
-        val result = mutableListOf<String>()
-        source.lines().forEach { raw ->
-            val line = raw.trim()
-            val m = Regex("(export\\s+)?fn\\s+(\\w+)\\s*\\(").find(line)
-            if (m != null) {
-                result += m.groupValues[2]
-            }
-        }
-        return result
-    }
-
-    private fun extractDependencies(source: String): List<String> {
-        val dependencies = mutableListOf<String>()
-        source.lines().forEach { raw ->
-            val line = raw.trim()
-            if (!line.startsWith("use ")) {
-                return@forEach
-            }
-            val dep = Regex("use\\s+dynamicd:([a-zA-Z0-9_\\-]+)")
-                .find(line)
-                ?.groupValues
-                ?.getOrNull(1)
-            if (!dep.isNullOrBlank()) {
-                dependencies += dep
-            }
-        }
-        return dependencies.distinct()
     }
 }

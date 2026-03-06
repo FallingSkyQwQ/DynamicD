@@ -69,4 +69,36 @@ class CompilerFacadeTest {
         assertFalse(result.success)
         assertTrue(result.diagnostics.any { it.code == "E0500" })
     }
+
+    @Test
+    fun `requires module declaration`() {
+        val dir = Files.createTempDirectory("dynamicd-mod").toFile()
+        File(dir, "mod.yuz").writeText(
+            """
+            fn test() { }
+            """.trimIndent(),
+        )
+
+        val result = CompilerFacade.compileModule("welcome", dir)
+        assertFalse(result.success)
+        assertTrue(result.diagnostics.any { it.code == "E0200" })
+    }
+
+    @Test
+    fun `only exported functions are in symbol index`() {
+        val dir = Files.createTempDirectory("dynamicd-mod").toFile()
+        File(dir, "mod.yuz").writeText(
+            """
+            module "dynamicd:welcome"
+            fn hidden() { }
+            export fn open() { }
+            use dynamicd:core
+            """.trimIndent(),
+        )
+
+        val result = CompilerFacade.compileModule("welcome", dir)
+        assertTrue(result.success)
+        assertEquals(listOf("open"), result.symbolIndex.exportedFunctions)
+        assertEquals(listOf("core"), result.symbolIndex.dependencies)
+    }
 }
