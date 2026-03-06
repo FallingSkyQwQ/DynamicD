@@ -144,7 +144,11 @@ class DynamicDPlugin : JavaPlugin() {
             sessionStore = AgentSessionStore(File(dataFolder, "workspace/agent")),
             memoryStore = AgentMemoryStore(File(dataFolder, "workspace/agent/memory")),
         )
-        val benchService = BenchService(moduleManager, File(dataFolder, "data/bench/latest.report"))
+        val benchService = BenchService(
+            moduleManager = moduleManager,
+            storageFile = File(dataFolder, "data/bench/latest.report"),
+            agentStatsProvider = { agentService.runtimeStats() },
+        )
         val replSessionManager = ReplSessionManager(dynamicDConfig.repl.timeoutSeconds)
         val replEvaluator = ReplEvaluator(
             securityPolicy = SecurityPolicy(),

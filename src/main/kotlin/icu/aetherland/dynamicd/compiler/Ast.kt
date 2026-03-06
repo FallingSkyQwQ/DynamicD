@@ -31,17 +31,20 @@ data class EnumDeclaration(
 
 data class TraitDeclaration(
     val name: String,
+    val methods: List<String>,
 ) : AstDeclaration
 
 data class ImplDeclaration(
     val traitName: String,
     val targetType: String,
+    val methods: List<String>,
 ) : AstDeclaration
 
 data class MatchDeclaration(
     val targetExpression: String,
     val hasElseBranch: Boolean,
     val caseCount: Int,
+    val caseLabels: List<String>,
 ) : AstDeclaration
 
 data class StateDeclaration(

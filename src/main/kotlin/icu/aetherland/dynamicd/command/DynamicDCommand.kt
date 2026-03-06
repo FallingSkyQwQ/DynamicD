@@ -346,7 +346,9 @@ class DynamicDCommand(
                 val report = benchService.run(moduleId, iterations)
                 sender.sendMessage(
                     "bench module=${report.moduleId} cold=${report.compileColdMs}ms warmAvg=${report.compileWarmAvgMs}ms " +
-                        "reloadAvg=${report.reloadAvgMs}ms reuse=${"%.2f".format(report.incrementalReuseRatio)}",
+                        "reloadAvg=${report.reloadAvgMs}ms reuse=${"%.2f".format(report.incrementalReuseRatio)} " +
+                        "reloadOk=${"%.2f".format(report.reloadSuccessRate)} events/s=${"%.2f".format(report.eventThroughputPerSec)} " +
+                        "agentOk=${"%.2f".format(report.agentSuccessRate)}",
                 )
                 true
             }
@@ -358,8 +360,10 @@ class DynamicDCommand(
                 }
                 sender.sendMessage(
                     "bench latest module=${report.moduleId} iterations=${report.iterations} " +
-                        "cold=${report.compileColdMs}ms warmAvg=${report.compileWarmAvgMs}ms " +
-                        "reloadAvg=${report.reloadAvgMs}ms reuse=${"%.2f".format(report.incrementalReuseRatio)}",
+                    "cold=${report.compileColdMs}ms warmAvg=${report.compileWarmAvgMs}ms " +
+                        "reloadAvg=${report.reloadAvgMs}ms reuse=${"%.2f".format(report.incrementalReuseRatio)} " +
+                        "reloadOk=${"%.2f".format(report.reloadSuccessRate)} events/s=${"%.2f".format(report.eventThroughputPerSec)} " +
+                        "agentOk=${"%.2f".format(report.agentSuccessRate)}",
                 )
                 true
             }

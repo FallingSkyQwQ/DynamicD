@@ -88,13 +88,30 @@ object SemanticAnalyzer {
 
     private fun checkImplBindings(file: File, ast: AstModule): List<Diagnostic> {
         val diagnostics = mutableListOf<Diagnostic>()
-        val traits = ast.declarations.filterIsInstance<TraitDeclaration>().map { it.name }.toSet()
+        val traitMap = ast.declarations.filterIsInstance<TraitDeclaration>().associateBy { it.name }
+        val traits = traitMap.keys
         val types = mutableSetOf<String>()
         types += ast.declarations.filterIsInstance<RecordDeclaration>().map { it.name }
         types += ast.declarations.filterIsInstance<EnumDeclaration>().map { it.name }
         types += setOf("Int", "Long", "Float", "Double", "Bool", "String", "Player", "World")
+        val implSeen = mutableSetOf<String>()
 
         ast.declarations.filterIsInstance<ImplDeclaration>().forEach { decl ->
+            val implKey = "${decl.traitName}->${decl.targetType}"
+            if (!implSeen.add(implKey)) {
+                diagnostics += Diagnostic(
+                    code = "E0607",
+                    level = DiagnosticLevel.ERROR,
+                    stage = DiagnosticStage.RESOLVE,
+                    message = "Duplicate impl block for $implKey",
+                    file = file.name,
+                    line = 1,
+                    column = 1,
+                    expected = "single impl per trait-target pair",
+                    actual = "duplicate",
+                    suggestion = "Merge duplicate impl blocks",
+                )
+            }
             if (decl.traitName !in traits) {
                 diagnostics += Diagnostic(
                     code = "E0601",
@@ -123,12 +140,45 @@ object SemanticAnalyzer {
                     suggestion = "Declare record/enum `${decl.targetType}` or use a builtin type",
                 )
             }
+            val traitMethods = traitMap[decl.traitName]?.methods.orEmpty().toSet()
+            if (traitMethods.isNotEmpty()) {
+                val implMethods = decl.methods.toSet()
+                val missing = (traitMethods - implMethods).sorted()
+                if (missing.isNotEmpty()) {
+                    diagnostics += Diagnostic(
+                        code = "E0605",
+                        level = DiagnosticLevel.ERROR,
+                        stage = DiagnosticStage.TYPE,
+                        message = "Impl for `${decl.traitName}` missing methods: ${missing.joinToString(",")}",
+                        file = file.name,
+                        line = 1,
+                        column = 1,
+                        expected = traitMethods.joinToString(","),
+                        actual = implMethods.joinToString(","),
+                        suggestion = "Implement missing trait methods in impl block",
+                    )
+                }
+                val extra = (implMethods - traitMethods).sorted()
+                if (extra.isNotEmpty()) {
+                    diagnostics += Diagnostic(
+                        code = "W0606",
+                        level = DiagnosticLevel.WARNING,
+                        stage = DiagnosticStage.TYPE,
+                        message = "Impl has extra methods not in trait `${decl.traitName}`: ${extra.joinToString(",")}",
+                        file = file.name,
+                        line = 1,
+                        column = 1,
+                        suggestion = "Remove extra methods or update trait definition",
+                    )
+                }
+            }
         }
         return diagnostics
     }
 
     private fun checkMatchCoverage(file: File, ast: AstModule): List<Diagnostic> {
         val diagnostics = mutableListOf<Diagnostic>()
+        val enumMap = ast.declarations.filterIsInstance<EnumDeclaration>().associateBy { it.name }
         ast.declarations.filterIsInstance<MatchDeclaration>().forEach { decl ->
             if (!decl.hasElseBranch && decl.caseCount == 0) {
                 diagnostics += Diagnostic(
@@ -143,6 +193,26 @@ object SemanticAnalyzer {
                     actual = "empty match",
                     suggestion = "Add at least one case or an else branch",
                 )
+                return@forEach
+            }
+
+            val enumDecl = enumMap[decl.targetExpression]
+            if (enumDecl != null && !decl.hasElseBranch) {
+                val missing = enumDecl.variants.filter { it !in decl.caseLabels }
+                if (missing.isNotEmpty()) {
+                    diagnostics += Diagnostic(
+                        code = "E0608",
+                        level = DiagnosticLevel.ERROR,
+                        stage = DiagnosticStage.TYPE,
+                        message = "Non-exhaustive enum match for `${enumDecl.name}`, missing: ${missing.joinToString(",")}",
+                        file = file.name,
+                        line = 1,
+                        column = 1,
+                        expected = enumDecl.variants.joinToString(","),
+                        actual = decl.caseLabels.joinToString(","),
+                        suggestion = "Add missing enum cases or else branch",
+                    )
+                }
             } else if (!decl.hasElseBranch) {
                 diagnostics += Diagnostic(
                     code = "W0604",

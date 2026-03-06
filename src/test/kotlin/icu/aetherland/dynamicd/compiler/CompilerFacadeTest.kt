@@ -101,6 +101,7 @@ class CompilerFacadeTest {
                 fn format() -> String
             }
             impl Formatter for Reward {
+                fn format() -> String { }
             }
             fn hidden() { }
             export fn open() { }
@@ -135,6 +136,29 @@ class CompilerFacadeTest {
     }
 
     @Test
+    fun `fails when impl misses required trait methods`() {
+        val dir = Files.createTempDirectory("dynamicd-mod").toFile()
+        File(dir, "mod.yuz").writeText(
+            """
+            module "dynamicd:welcome"
+            record Reward {
+                id: String
+            }
+            trait Formatter {
+                fn format() -> String
+                fn label() -> String
+            }
+            impl Formatter for Reward {
+                fn format() -> String { }
+            }
+            """.trimIndent(),
+        )
+        val result = CompilerFacade.compileModule("welcome", dir)
+        assertFalse(result.success)
+        assertTrue(result.diagnostics.any { it.code == "E0605" })
+    }
+
+    @Test
     fun `fails question mark outside result context`() {
         val dir = Files.createTempDirectory("dynamicd-mod").toFile()
         File(dir, "mod.yuz").writeText(
@@ -164,5 +188,25 @@ class CompilerFacadeTest {
         val result = CompilerFacade.compileModule("welcome", dir)
         assertTrue(result.success)
         assertTrue(result.diagnostics.any { it.code == "W0604" })
+    }
+
+    @Test
+    fun `enum match requires exhaustive cases without else`() {
+        val dir = Files.createTempDirectory("dynamicd-mod").toFile()
+        File(dir, "mod.yuz").writeText(
+            """
+            module "dynamicd:welcome"
+            enum Rank {
+              MEMBER
+              VIP
+            }
+            match Rank {
+              case VIP => tell player "vip"
+            }
+            """.trimIndent(),
+        )
+        val result = CompilerFacade.compileModule("welcome", dir)
+        assertFalse(result.success)
+        assertTrue(result.diagnostics.any { it.code == "E0608" })
     }
 }

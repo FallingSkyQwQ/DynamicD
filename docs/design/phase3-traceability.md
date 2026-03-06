@@ -38,9 +38,9 @@
   - Implementation: typed lexer (`TokenType`, block-comment/string diagnostics), parser扩展（`module/version/use/export fn/state/persist/placeholder`）, semantic analyzer entry (`module required`, duplicate symbol, nullable/effect checks).
   - Tests: `LexerTest`, `CompilerFacadeTest.requires module declaration`, `CompilerFacadeTest.only exported functions are in symbol index`.
 - yuz 语义系统扩展（全规范级第二里程碑）
-  - Implementation: parser & AST support for `record/enum/trait/impl/match`, semantic validation for impl trait/target binding (`E0601/E0602`), match coverage warning/error (`W0604/E0603`), and Result flow guard for `?` operator (`E0701`).
+  - Implementation: parser & AST support for `record/enum/trait/impl/match`, impl trait/target binding (`E0601/E0602`), impl method completeness (`E0605`) and duplicate impl guard (`E0607`), enum-match exhaustiveness (`E0608`) plus generic non-exhaustive warning (`W0604`), and Result flow guard for `?` operator (`E0701`).
   - Symbol index extended with `records/enums/traits`.
-  - Tests: `CompilerFacadeTest.fails impl target and trait validation`, `CompilerFacadeTest.fails question mark outside result context`, `CompilerFacadeTest.match without else emits warning`.
+  - Tests: `CompilerFacadeTest.fails impl target and trait validation`, `CompilerFacadeTest.fails when impl misses required trait methods`, `CompilerFacadeTest.enum match requires exhaustive cases without else`, `CompilerFacadeTest.fails question mark outside result context`, `CompilerFacadeTest.match without else emits warning`.
 - 模块依赖图可视化
   - Implementation: `ModuleManager.moduleDependencyGraph/moduleLoadOrder` + `/dd modules graph`.
   - Tests: `ModuleManagerTest.dependency graph and load order are built from use dynamicd imports`.
@@ -57,8 +57,8 @@
 - Folia 预适配
   - Implementation: runtime `TaskScheduler` abstraction + reflective `FoliaScheduler` + Bukkit fallback.
 - 生产压测结论基础能力
-  - Implementation: `BenchService` and `/dd bench run|report` (cold/warm compile, reload latency, incremental reuse ratio).
-  - Tests: `BenchServiceTest.runs and persists benchmark report`.
+  - Implementation: `BenchService` and `/dd bench run|report` (cold/warm compile, reload latency, incremental reuse ratio, reload success rate, synthetic event throughput, agent success rate).
+  - Tests: `BenchServiceTest.runs and persists benchmark report`, `AgentServiceTest.service persists session logs`.
 
 ## Alignment Notes
 - Phase 1/2 traceability remains valid; Phase 3 introduced stricter diagnostics, incremental compile paths, and stronger patch/rollback safety without removing earlier required behaviors.

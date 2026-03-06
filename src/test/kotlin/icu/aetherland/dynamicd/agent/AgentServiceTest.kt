@@ -60,5 +60,9 @@ class AgentServiceTest {
         val memoryFiles = File(root, "workspace/agent/memory").listFiles().orEmpty()
         assertFalse(memoryFiles.isEmpty())
         assertTrue(memoryFiles.first().readText().contains("hello"))
+        val stats = service.runtimeStats()
+        assertTrue(stats.totalRuns >= 1)
+        assertTrue(stats.successfulRuns >= 1)
+        assertTrue(stats.successRate > 0.0)
     }
 }

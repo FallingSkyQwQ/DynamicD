@@ -50,9 +50,10 @@ object Parser {
                     val name = Regex("enum\\s+(\\w+)").find(line)?.groupValues?.getOrNull(1)
                     if (!name.isNullOrBlank()) {
                         val variants = mutableListOf<String>()
+                        val end = findBlockEndIndex(lines, i)
                         var j = i + 1
-                        while (j < lines.size) {
-                            val raw = lines[j].trim()
+                        while (j <= end && j < lines.size) {
+                            val raw = lines[j].trim().removeSuffix(",")
                             if (raw.startsWith("}")) break
                             val variant = Regex("^(\\w+)$").find(raw)?.groupValues?.getOrNull(1)
                             if (!variant.isNullOrBlank()) {
@@ -61,12 +62,14 @@ object Parser {
                             j++
                         }
                         declarations += EnumDeclaration(name, variants)
+                        i = end
                     }
                 }
                 line.startsWith("trait ") -> {
                     val name = Regex("trait\\s+(\\w+)").find(line)?.groupValues?.getOrNull(1)
                     if (!name.isNullOrBlank()) {
-                        declarations += TraitDeclaration(name)
+                        declarations += TraitDeclaration(name, collectFunctionNames(lines, i))
+                        i = findBlockEndIndex(lines, i)
                     }
                 }
                 line.startsWith("impl ") -> {
@@ -75,7 +78,9 @@ object Parser {
                         declarations += ImplDeclaration(
                             traitName = m.groupValues[1],
                             targetType = m.groupValues[2],
+                            methods = collectFunctionNames(lines, i),
                         )
+                        i = findBlockEndIndex(lines, i)
                     }
                 }
                 line.startsWith("match ") -> {
@@ -83,9 +88,11 @@ object Parser {
                     val details = collectMatchDetails(lines, i)
                     declarations += MatchDeclaration(
                         targetExpression = targetExpression,
-                        hasElseBranch = details.first,
-                        caseCount = details.second,
+                        hasElseBranch = details.hasElse,
+                        caseCount = details.caseLabels.size,
+                        caseLabels = details.caseLabels,
                     )
+                    i = findBlockEndIndex(lines, i)
                 }
                 line.startsWith("export fn ") || line.startsWith("fn ") -> {
                     val exported = line.startsWith("export fn ")
@@ -166,18 +173,62 @@ object Parser {
         )
     }
 
-    private fun collectMatchDetails(lines: List<String>, startIndex: Int): Pair<Boolean, Int> {
+    private fun collectFunctionNames(lines: List<String>, startIndex: Int): List<String> {
         var depth = 0
-        var caseCount = 0
-        var hasElse = false
+        var i = startIndex
+        val methods = mutableListOf<String>()
+        while (i < lines.size) {
+            val line = lines[i]
+            if (line.contains("{")) {
+                depth += line.count { it == '{' }
+            }
+            val method = Regex("\\bfn\\s+(\\w+)\\s*\\(").find(line)?.groupValues?.getOrNull(1)
+            if (!method.isNullOrBlank()) {
+                methods += method
+            }
+            if (line.contains("}")) {
+                depth -= line.count { it == '}' }
+                if (depth <= 0 && i > startIndex) {
+                    break
+                }
+            }
+            i++
+        }
+        return methods.distinct()
+    }
+
+    private fun findBlockEndIndex(lines: List<String>, startIndex: Int): Int {
+        var depth = 0
         var i = startIndex
         while (i < lines.size) {
             val line = lines[i]
             if (line.contains("{")) {
                 depth += line.count { it == '{' }
             }
-            if (line.contains("case ")) {
-                caseCount++
+            if (line.contains("}")) {
+                depth -= line.count { it == '}' }
+                if (depth <= 0 && i > startIndex) {
+                    return i
+                }
+            }
+            i++
+        }
+        return startIndex
+    }
+
+    private fun collectMatchDetails(lines: List<String>, startIndex: Int): MatchDetails {
+        var depth = 0
+        var hasElse = false
+        var i = startIndex
+        val caseLabels = mutableListOf<String>()
+        while (i < lines.size) {
+            val line = lines[i]
+            if (line.contains("{")) {
+                depth += line.count { it == '{' }
+            }
+            val caseLabel = Regex("\\bcase\\s+([^=\\s]+)\\s*=>").find(line)?.groupValues?.getOrNull(1)
+            if (!caseLabel.isNullOrBlank()) {
+                caseLabels += caseLabel
             }
             if (Regex("\\belse\\b").containsMatchIn(line)) {
                 hasElse = true
@@ -190,6 +241,11 @@ object Parser {
             }
             i++
         }
-        return hasElse to caseCount
+        return MatchDetails(hasElse = hasElse, caseLabels = caseLabels.distinct())
     }
+
+    private data class MatchDetails(
+        val hasElse: Boolean,
+        val caseLabels: List<String>,
+    )
 }

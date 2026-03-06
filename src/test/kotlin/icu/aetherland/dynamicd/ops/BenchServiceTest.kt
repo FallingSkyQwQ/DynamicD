@@ -4,6 +4,7 @@ import icu.aetherland.dynamicd.agent.AgentToolchain
 import icu.aetherland.dynamicd.audit.AuditLogger
 import icu.aetherland.dynamicd.integration.InMemoryPlaceholderRegistrar
 import icu.aetherland.dynamicd.integration.IntegrationRegistry
+import icu.aetherland.dynamicd.agent.loop.AgentRuntimeStats
 import icu.aetherland.dynamicd.module.ModuleManager
 import icu.aetherland.dynamicd.runtime.ListenerHandle
 import icu.aetherland.dynamicd.runtime.RuntimeBridge
@@ -52,16 +53,20 @@ class BenchServiceTest {
         )
 
         val reportFile = File(root, "data/bench/latest.report")
-        val service = BenchService(manager, reportFile)
+        val service = BenchService(manager, reportFile) { AgentRuntimeStats(totalRuns = 10, successfulRuns = 7) }
         val report = service.run("welcome", 3)
         assertEquals("welcome", report.moduleId)
         assertEquals(3, report.iterations)
         assertTrue(report.compileColdMs >= 0)
         assertTrue(report.compileWarmAvgMs >= 0)
         assertTrue(report.reloadAvgMs >= 0)
+        assertTrue(report.reloadSuccessRate >= 0.0)
+        assertTrue(report.eventThroughputPerSec >= 0.0)
+        assertTrue(report.agentSuccessRate >= 0.0)
 
         val latest = service.latest()
         assertNotNull(latest)
         assertEquals("welcome", latest.moduleId)
+        assertEquals(0.7, latest.agentSuccessRate)
     }
 }
