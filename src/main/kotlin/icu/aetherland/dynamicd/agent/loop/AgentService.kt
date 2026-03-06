@@ -1,7 +1,12 @@
 package icu.aetherland.dynamicd.agent.loop
 
-class AgentService(private val engine: AgentLoopEngine) {
+class AgentService(
+    private val engine: AgentLoopEngine,
+    private val sessionStore: AgentSessionStore,
+) {
     fun runPrompt(operator: String, permissions: Set<String>, prompt: String): AgentTurnResult {
-        return engine.run(operator, permissions, prompt)
+        val result = engine.run(operator, permissions, prompt)
+        sessionStore.append(result)
+        return result
     }
 }

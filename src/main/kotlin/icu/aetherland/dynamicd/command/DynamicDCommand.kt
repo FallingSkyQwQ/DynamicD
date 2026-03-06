@@ -7,6 +7,7 @@ import icu.aetherland.dynamicd.integration.PlaceholderRegistrar
 import icu.aetherland.dynamicd.module.ModuleManager
 import icu.aetherland.dynamicd.repl.ReplEvaluator
 import icu.aetherland.dynamicd.repl.ReplSessionManager
+import icu.aetherland.dynamicd.security.ConfirmationManager
 import icu.aetherland.dynamicd.security.DangerousActionGuard
 import org.bukkit.command.Command
 import org.bukkit.command.CommandExecutor
@@ -18,6 +19,7 @@ import java.time.Duration
 class DynamicDCommand(
     private val moduleManager: ModuleManager,
     private val dangerousActionGuard: DangerousActionGuard,
+    private val confirmationManager: ConfirmationManager,
     private val agentService: AgentService,
     private val replSessionManager: ReplSessionManager,
     private val replEvaluator: ReplEvaluator,
@@ -32,6 +34,8 @@ class DynamicDCommand(
             sender.sendMessage("/dd repl <open|exec|close>")
             sender.sendMessage("/dd papi list")
             sender.sendMessage("/dd perms sync")
+            sender.sendMessage("/dd doctor")
+            sender.sendMessage("/dd confirm <token>")
             return true
         }
         val operator = sender.name
@@ -43,6 +47,8 @@ class DynamicDCommand(
             "repl" -> handleRepl(sender, args.drop(1))
             "papi" -> handlePapi(sender, args.drop(1))
             "perms" -> handlePerms(sender, args.drop(1))
+            "doctor" -> handleDoctor(sender)
+            "confirm" -> handleConfirm(sender, operator, permissions, args.drop(1))
             else -> {
                 sender.sendMessage("Unknown subcommand")
                 true
@@ -127,7 +133,8 @@ class DynamicDCommand(
                 val snapshotId = args[1]
                 val confirmed = args.contains("--confirm")
                 if (!dangerousActionGuard.isConfirmed(sender, confirmed)) {
-                    sender.sendMessage("Rollback requires explicit --confirm")
+                    val conf = confirmationManager.create(operator, "snapshot.rollback", snapshotId)
+                    sender.sendMessage("Rollback pending confirmation token=${conf.token}. Run /dd confirm ${conf.token}")
                     return true
                 }
                 sender.sendMessage("rollback $snapshotId => ${moduleManager.rollback(snapshotId, operator, permissions)}")
@@ -157,11 +164,12 @@ class DynamicDCommand(
                 return true
             }
             val confirmed = args.contains("--confirm")
+            val cmd = args.filterNot { it == "--confirm" }.drop(1).joinToString(" ")
             if (!dangerousActionGuard.isConfirmed(sender, confirmed)) {
-                sender.sendMessage("Dangerous command requires --confirm")
+                val conf = confirmationManager.create(operator, "agent.run", cmd)
+                sender.sendMessage("Dangerous command pending token=${conf.token}. Run /dd confirm ${conf.token}")
                 return true
             }
-            val cmd = args.filterNot { it == "--confirm" }.drop(1).joinToString(" ")
             sender.sendMessage("agent run => ${moduleManager.runDangerousCommand(cmd, operator, permissions).allowed}")
             return true
         }
@@ -169,7 +177,7 @@ class DynamicDCommand(
         val prompt = args.joinToString(" ")
         val result = agentService.runPrompt(operator, permissions, prompt)
         sender.sendMessage("[Agent] requestId=${result.requestId} success=${result.success}")
-        result.events.takeLast(5).forEach { event ->
+        result.events.takeLast(8).forEach { event ->
             sender.sendMessage("[${event.type}] ${event.message}")
         }
         sender.sendMessage("[Summary] ${result.summary}")
@@ -202,6 +210,11 @@ class DynamicDCommand(
                     return true
                 }
                 val input = args.drop(1).joinToString(" ")
+                if (isSensitiveReplInput(input)) {
+                    val conf = confirmationManager.create(sender.name, "repl.exec", input)
+                    sender.sendMessage("Sensitive REPL input pending token=${conf.token}. Run /dd confirm ${conf.token}")
+                    return true
+                }
                 sender.sendMessage(replEvaluator.eval(session, input))
                 true
             }
@@ -244,6 +257,51 @@ class DynamicDCommand(
         return true
     }
 
+    private fun handleDoctor(sender: CommandSender): Boolean {
+        val modules = moduleManager.listModules()
+        sender.sendMessage("doctor modules=${modules.size} enabled=${modules.count { it.state.name == "ENABLED" }}")
+        moduleManager.integrationDiagnostics().forEach {
+            sender.sendMessage("doctor integration=${it.integration} available=${it.available} enabled=${it.enabled} msg=${it.message}")
+        }
+        return true
+    }
+
+    private fun handleConfirm(
+        sender: CommandSender,
+        operator: String,
+        permissions: Set<String>,
+        args: List<String>,
+    ): Boolean {
+        if (args.isEmpty()) {
+            sender.sendMessage("Usage: /dd confirm <token>")
+            return true
+        }
+        val token = args[0]
+        val pending = confirmationManager.consume(operator, token)
+        if (pending == null) {
+            sender.sendMessage("Invalid or expired token")
+            return true
+        }
+        when (pending.action) {
+            "agent.run" -> {
+                sender.sendMessage("agent run (confirmed) => ${moduleManager.runDangerousCommand(pending.payload, operator, permissions).allowed}")
+            }
+            "snapshot.rollback" -> {
+                sender.sendMessage("rollback (confirmed) => ${moduleManager.rollback(pending.payload, operator, permissions)}")
+            }
+            "repl.exec" -> {
+                val session = replSessionManager.get(operator)
+                if (session == null) {
+                    sender.sendMessage("No active REPL session")
+                } else {
+                    sender.sendMessage(replEvaluator.eval(session, pending.payload))
+                }
+            }
+            else -> sender.sendMessage("Unknown confirmation action")
+        }
+        return true
+    }
+
     private fun collectPermissions(sender: CommandSender): Set<String> {
         val all = mutableSetOf<String>()
         AgentToolAction.entries.forEach { action ->
@@ -264,6 +322,9 @@ class DynamicDCommand(
                 all.add(node)
             }
         }
+        if (sender.hasPermission("dynamicd.agent.command.dangerous")) {
+            all.add("dynamicd.agent.command.dangerous")
+        }
         if (sender.hasPermission("dynamicd.ops")) {
             all.addAll(
                 setOf(
@@ -273,6 +334,7 @@ class DynamicDCommand(
                     "dynamicd.agent.compile",
                     "dynamicd.agent.load",
                     "dynamicd.agent.command",
+                    "dynamicd.agent.command.dangerous",
                     "dynamicd.agent.rollback",
                 ),
             )
@@ -296,7 +358,7 @@ class DynamicDCommand(
         args: Array<out String>,
     ): MutableList<String> {
         if (args.size == 1) {
-            return mutableListOf("modules", "snapshot", "agent", "repl", "papi", "perms")
+            return mutableListOf("modules", "snapshot", "agent", "repl", "papi", "perms", "doctor", "confirm")
                 .filter { it.startsWith(args[0], ignoreCase = true) }
                 .toMutableList()
         }
@@ -322,5 +384,10 @@ class DynamicDCommand(
             return mutableListOf("sync").filter { it.startsWith(args[1], ignoreCase = true) }.toMutableList()
         }
         return mutableListOf()
+    }
+
+    private fun isSensitiveReplInput(input: String): Boolean {
+        val lowered = input.lowercase()
+        return lowered.contains("run ") || lowered.contains("rollback") || lowered.contains("grant")
     }
 }

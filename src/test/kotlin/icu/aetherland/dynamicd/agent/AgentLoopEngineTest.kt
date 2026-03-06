@@ -64,4 +64,47 @@ class AgentLoopEngineTest {
         assertTrue(result.success)
         assertTrue(result.summary.contains("completed"))
     }
+
+    @Test
+    fun `loop supports json tool call format`() {
+        val root = Files.createTempDirectory("dynamicd-agent-loop-json").toFile()
+        val moduleRoot = File(root, "modules").apply { mkdirs() }
+        val manager = ModuleManager(
+            modulesRoot = moduleRoot,
+            runtimeBridge = object : RuntimeBridge {
+                override fun bindEvent(moduleId: String, eventPath: String): ListenerHandle? = null
+                override fun bindTimer(moduleId: String, timerSpec: String): TaskHandle? = null
+            },
+            snapshotManager = SnapshotManager(File(root, "snapshots")),
+            agentToolchain = AgentToolchain(AuditLogger(File(root, "audit.log"))),
+            integrationRegistry = IntegrationRegistry.fromAvailability(
+                mapOf("PlaceholderAPI" to true, "LuckPerms" to true, "Vault" to true),
+            ),
+            placeholderBridge = InMemoryPlaceholderRegistrar(),
+            securityPolicy = SecurityPolicy(),
+            defaultSandboxLevel = SandboxLevel.ADMIN,
+            logger = {},
+        )
+
+        val provider = object : LlmProvider {
+            override val name: String = "fake-json"
+            private var count = 0
+            override fun complete(request: LlmRequest): LlmResponse {
+                count++
+                return if (count == 1) {
+                    LlmResponse("""{"tool":"create","args":"world module \"dynamicd:world\""}""")
+                } else {
+                    LlmResponse("FINAL:json tool path complete")
+                }
+            }
+        }
+        val engine = AgentLoopEngine(
+            provider = provider,
+            toolExecutor = AgentToolExecutor(manager),
+            config = AgentLoopConfig(model = "fake", maxIterations = 4),
+        )
+        val result = engine.run("tester", AgentToolchain.SYSTEM_PERMISSIONS, "create module via json")
+        assertTrue(result.success)
+        assertTrue(result.summary.contains("complete"))
+    }
 }

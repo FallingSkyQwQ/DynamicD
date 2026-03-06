@@ -101,6 +101,17 @@ class ModuleManagerTest {
         assertTrue(auditText.contains("strategy=TEXT"))
     }
 
+    @Test
+    fun `dangerous command requires dangerous permission`() {
+        val env = testEnv("m1" to """module "dynamicd:m1"""")
+        val withoutDanger = setOf("dynamicd.agent.command")
+        val denied = env.manager.runDangerousCommand("op Steve", "tester", withoutDanger)
+        assertFalse(denied.allowed)
+        val withDanger = setOf("dynamicd.agent.command", "dynamicd.agent.command.dangerous")
+        val allowed = env.manager.runDangerousCommand("op Steve", "tester", withDanger)
+        assertTrue(allowed.allowed)
+    }
+
     private fun testEnv(vararg modules: Pair<String, String>): Env {
         val root = Files.createTempDirectory("dynamicd-mm").toFile()
         val modulesRoot = File(root, "modules").apply { mkdirs() }

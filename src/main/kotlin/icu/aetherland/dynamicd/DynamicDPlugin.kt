@@ -4,6 +4,7 @@ import icu.aetherland.dynamicd.agent.AgentToolchain
 import icu.aetherland.dynamicd.agent.llm.OpenAiCompatibleProvider
 import icu.aetherland.dynamicd.agent.loop.AgentLoopConfig
 import icu.aetherland.dynamicd.agent.loop.AgentLoopEngine
+import icu.aetherland.dynamicd.agent.loop.AgentSessionStore
 import icu.aetherland.dynamicd.agent.loop.AgentService
 import icu.aetherland.dynamicd.agent.loop.AgentToolExecutor
 import icu.aetherland.dynamicd.audit.AuditLogger
@@ -20,6 +21,7 @@ import icu.aetherland.dynamicd.repl.ReplSessionManager
 import icu.aetherland.dynamicd.runtime.BukkitRuntimeBridge
 import icu.aetherland.dynamicd.runtime.EventBridge
 import icu.aetherland.dynamicd.security.DangerousActionGuard
+import icu.aetherland.dynamicd.security.ConfirmationManager
 import icu.aetherland.dynamicd.security.SecurityPolicy
 import icu.aetherland.dynamicd.util.PaperVersionChecker
 import org.bukkit.Bukkit
@@ -106,7 +108,10 @@ class DynamicDPlugin : JavaPlugin() {
                 maxIterations = dynamicDConfig.agent.maxIterations,
             ),
         )
-        val agentService = AgentService(loopEngine)
+        val agentService = AgentService(
+            engine = loopEngine,
+            sessionStore = AgentSessionStore(File(dataFolder, "workspace/agent")),
+        )
         val replSessionManager = ReplSessionManager(dynamicDConfig.repl.timeoutSeconds)
         val replEvaluator = ReplEvaluator(
             securityPolicy = SecurityPolicy(),
@@ -117,6 +122,7 @@ class DynamicDPlugin : JavaPlugin() {
         val command = DynamicDCommand(
             moduleManager = moduleManager,
             dangerousActionGuard = DangerousActionGuard(),
+            confirmationManager = ConfirmationManager(60),
             agentService = agentService,
             replSessionManager = replSessionManager,
             replEvaluator = replEvaluator,

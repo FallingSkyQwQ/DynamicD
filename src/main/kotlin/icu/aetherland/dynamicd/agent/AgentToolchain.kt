@@ -25,6 +25,7 @@ class AgentToolchain(private val auditLogger: AuditLogger) {
             "dynamicd.agent.compile",
             "dynamicd.agent.load",
             "dynamicd.agent.command",
+            "dynamicd.agent.command.dangerous",
             "dynamicd.agent.rollback",
         )
     }

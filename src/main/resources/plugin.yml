@@ -7,7 +7,7 @@ website: https://example.invalid
 commands:
   dd:
     description: DynamicD control command
-    usage: /dd <modules|snapshot|agent|repl|papi|perms>
+    usage: /dd <modules|snapshot|agent|repl|papi|perms|doctor|confirm>
     permission: dynamicd.ops
 permissions:
   dynamicd.ops:
@@ -27,6 +27,8 @@ permissions:
   dynamicd.agent.load:
     default: op
   dynamicd.agent.command:
+    default: op
+  dynamicd.agent.command.dangerous:
     default: op
   dynamicd.agent.rollback:
     default: op

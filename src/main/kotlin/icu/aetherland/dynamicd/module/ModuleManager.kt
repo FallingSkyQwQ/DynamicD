@@ -128,8 +128,14 @@ class ModuleManager(
     fun runDangerousCommand(command: String, operator: String, grantedPermissions: Set<String>): SecurityDecision {
         val auth = agentToolchain.authorize(AgentToolAction.RUN, grantedPermissions)
         val sec = checkSecurity(Capability.COMMAND_RUN)
+        val dangerous = isDangerousCommand(command)
         if (!auth.allowed) {
             val missing = auth.missingPermission ?: "dynamicd.agent.command"
+            agentToolchain.recordAction(operator, AgentToolAction.RUN, command, "denied:missing_permission:$missing")
+            return SecurityDecision(false, "missing $missing")
+        }
+        if (dangerous && "dynamicd.agent.command.dangerous" !in grantedPermissions) {
+            val missing = "dynamicd.agent.command.dangerous"
             agentToolchain.recordAction(operator, AgentToolAction.RUN, command, "denied:missing_permission:$missing")
             return SecurityDecision(false, "missing $missing")
         }
@@ -184,6 +190,8 @@ class ModuleManager(
     fun listModules(): List<ModuleDescriptor> = discoverModules()
 
     fun listSnapshots(): List<String> = snapshotManager.listSnapshots()
+
+    fun integrationDiagnostics() = integrationRegistry.diagnostics()
 
     fun enabledModuleIds(): Set<String> {
         return modules.values
@@ -427,5 +435,11 @@ class ModuleManager(
 
     private fun checkSecurity(capability: Capability): SecurityDecision {
         return securityPolicy.check(defaultSandboxLevel, capability)
+    }
+
+    private fun isDangerousCommand(command: String): Boolean {
+        val lowered = command.trim().lowercase()
+        val head = lowered.split(" ").firstOrNull().orEmpty()
+        return head in setOf("op", "deop", "stop", "restart", "reload", "lp", "luckperms")
     }
 }
