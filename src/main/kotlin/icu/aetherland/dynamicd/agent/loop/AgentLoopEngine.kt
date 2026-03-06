@@ -8,6 +8,7 @@ import java.util.UUID
 data class AgentLoopConfig(
     val model: String,
     val maxIterations: Int,
+    val maxConsecutiveNoProgress: Int = 2,
 )
 
 class AgentLoopEngine(
@@ -18,13 +19,20 @@ class AgentLoopEngine(
     fun run(operator: String, permissions: Set<String>, prompt: String): AgentTurnResult {
         val requestId = UUID.randomUUID().toString()
         val events = mutableListOf<AgentEvent>()
+        val planLines = mutableListOf<String>()
+        val completedToolCalls = mutableListOf<String>()
+        var noProgressCount = 0
         val transcript = mutableListOf(
             LlmMessage(
                 role = "system",
                 content = """
                 You are DynamicD autonomous agent.
-                Use TOOL calls with format: TOOL:<name> <args>
-                Finish with: FINAL:<summary>
+                Use this strict protocol:
+                PLAN:<short next step>
+                TOOL:<name> <args>
+                REFLECT:<what changed>
+                FINAL:<summary> (only when done)
+                Keep actions auditable and minimal.
                 """.trimIndent(),
             ),
             LlmMessage(role = "user", content = prompt),
@@ -39,16 +47,37 @@ class AgentLoopEngine(
                 ),
             )
             val content = response.content.trim()
+            if (content.isBlank()) {
+                noProgressCount++
+                transcript += LlmMessage("user", "Empty response is invalid. Continue with PLAN/TOOL/REFLECT/FINAL.")
+                return@repeat
+            }
             events += AgentEvent(
                 requestId = requestId,
                 type = AgentEventType.MODEL_RESPONSE,
                 message = "step=$step content=${content.take(240)}",
             )
+            val modelStep = AgentProtocol.parse(content)
 
-            val toolCalls = parseToolCalls(content)
-            if (toolCalls.isNotEmpty()) {
+            if (modelStep.plans.isNotEmpty()) {
+                planLines += modelStep.plans
+                events += AgentEvent(
+                    requestId = requestId,
+                    type = AgentEventType.PLAN_UPDATED,
+                    message = modelStep.plans.joinToString(" | ").take(240),
+                )
+            }
+            if (modelStep.reflections.isNotEmpty()) {
+                events += AgentEvent(
+                    requestId = requestId,
+                    type = AgentEventType.REFLECTION,
+                    message = modelStep.reflections.joinToString(" | ").take(240),
+                )
+            }
+
+            if (modelStep.toolCalls.isNotEmpty()) {
                 val toolResults = mutableListOf<String>()
-                toolCalls.forEach { toolCall ->
+                modelStep.toolCalls.forEach { toolCall ->
                     events += AgentEvent(
                         requestId = requestId,
                         type = AgentEventType.TOOL_CALL,
@@ -56,6 +85,7 @@ class AgentLoopEngine(
                     )
                     val result = toolExecutor.execute(operator, permissions, toolCall.name, toolCall.args)
                     toolResults += "${toolCall.name}=$result"
+                    completedToolCalls += "${toolCall.name} ${toolCall.args}".trim()
                     events += AgentEvent(
                         requestId = requestId,
                         type = AgentEventType.TOOL_RESULT,
@@ -64,10 +94,11 @@ class AgentLoopEngine(
                 }
                 transcript += LlmMessage("assistant", content)
                 transcript += LlmMessage("tool", "TOOL_RESULT ${toolResults.joinToString(" | ")}")
+                noProgressCount = 0
                 return@repeat
             }
 
-            val finalSummary = parseFinal(content)
+            val finalSummary = modelStep.finalSummary
             if (finalSummary != null) {
                 events += AgentEvent(
                     requestId = requestId,
@@ -77,13 +108,28 @@ class AgentLoopEngine(
                 return AgentTurnResult(
                     requestId = requestId,
                     success = true,
-                    summary = finalSummary,
+                    summary = buildSummary(finalSummary, planLines, completedToolCalls),
                     events = events,
                 )
             }
 
+            noProgressCount++
+            if (noProgressCount > config.maxConsecutiveNoProgress) {
+                val summary = "loop stalled: no tool/final response after $noProgressCount iterations"
+                events += AgentEvent(
+                    requestId = requestId,
+                    type = AgentEventType.TURN_FAILED,
+                    message = summary,
+                )
+                return AgentTurnResult(
+                    requestId = requestId,
+                    success = false,
+                    summary = buildSummary(summary, planLines, completedToolCalls),
+                    events = events,
+                )
+            }
             transcript += LlmMessage("assistant", content)
-            transcript += LlmMessage("user", "No tool call/final summary detected, continue.")
+            transcript += LlmMessage("user", "No actionable TOOL/FINAL found. Continue with strict PLAN/TOOL/REFLECT/FINAL.")
         }
 
         events += AgentEvent(
@@ -94,67 +140,18 @@ class AgentLoopEngine(
         return AgentTurnResult(
             requestId = requestId,
             success = false,
-            summary = "max iterations reached",
+            summary = buildSummary("max iterations reached", planLines, completedToolCalls),
             events = events,
         )
     }
 
-    private fun parseToolCalls(content: String): List<ToolCall> {
-        val calls = mutableListOf<ToolCall>()
-        content.lines().forEach { raw ->
-            val line = raw.trim()
-            if (line.startsWith("TOOL:", ignoreCase = true)) {
-                val payload = line.substringAfter("TOOL:", "").trim()
-                if (payload.isNotBlank()) {
-                    val parts = payload.split(" ", limit = 2)
-                    calls += ToolCall(parts[0], parts.getOrElse(1) { "" })
-                }
-            }
-            if (line.startsWith("{") && line.contains("\"tool\"")) {
-                val tool = extractJsonString(line, "tool")
-                if (!tool.isNullOrBlank()) {
-                    calls += ToolCall(tool, extractJsonString(line, "args").orEmpty())
-                }
-            }
-        }
-        return calls
+    private fun buildSummary(
+        finalSummary: String,
+        plans: List<String>,
+        completedToolCalls: List<String>,
+    ): String {
+        val planPart = if (plans.isEmpty()) "none" else plans.distinct().joinToString(" -> ").take(280)
+        val toolsPart = if (completedToolCalls.isEmpty()) "none" else completedToolCalls.joinToString(" | ").take(280)
+        return "result=$finalSummary plan=$planPart tools=$toolsPart"
     }
-
-    private fun parseFinal(content: String): String? {
-        val line = content.lines().firstOrNull { it.trim().startsWith("FINAL:", ignoreCase = true) } ?: return null
-        return line.substringAfter("FINAL:", "").trim().ifBlank { null }
-    }
-
-    private fun extractJsonString(input: String, key: String): String? {
-        val marker = "\"$key\""
-        val keyIdx = input.indexOf(marker)
-        if (keyIdx < 0) return null
-        val colon = input.indexOf(':', keyIdx + marker.length)
-        if (colon < 0) return null
-        val quoteStart = input.indexOf('"', colon + 1)
-        if (quoteStart < 0) return null
-        var i = quoteStart + 1
-        val sb = StringBuilder()
-        var escaped = false
-        while (i < input.length) {
-            val c = input[i]
-            if (escaped) {
-                sb.append(c)
-                escaped = false
-                i++
-                continue
-            }
-            if (c == '\\') {
-                escaped = true
-                i++
-                continue
-            }
-            if (c == '"') break
-            sb.append(c)
-            i++
-        }
-        return sb.toString()
-    }
-
-    private data class ToolCall(val name: String, val args: String)
 }

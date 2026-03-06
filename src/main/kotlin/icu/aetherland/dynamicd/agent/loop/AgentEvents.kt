@@ -5,9 +5,11 @@ import java.util.UUID
 
 enum class AgentEventType {
     TURN_STARTED,
+    PLAN_UPDATED,
     MODEL_RESPONSE,
     TOOL_CALL,
     TOOL_RESULT,
+    REFLECTION,
     TURN_COMPLETED,
     TURN_FAILED,
 }

@@ -40,6 +40,14 @@
 - AST Patch 稳定化
   - Implementation: `AstPatchEngine` supports idempotent `upsert use`, guarded replace, duplicate-safe append.
   - Tests: `AstPatchEngineTest.ast patch upsert use is idempotent`.
+- 更强 Agent 循环
+  - Implementation: `PLAN/TOOL/REFLECT/FINAL` protocol parser, no-progress stall detection, structured summary with plan/tool trace.
+  - Tests: `AgentLoopEngineTest.loop captures plan reflect and stalls on no progress`.
+- 宿主扩展 SPI 生态化
+  - Implementation: `integration.spi` (`YuzHostExtension`, `ExtensionRegistry`, in-memory registries, ServiceLoader discover).
+  - Tests: `ExtensionRegistryTest.registry records extension published contracts`.
+- Folia 预适配
+  - Implementation: runtime `TaskScheduler` abstraction + reflective `FoliaScheduler` + Bukkit fallback.
 
 ## Alignment Notes
 - Phase 1/2 traceability remains valid; Phase 3 introduced stricter diagnostics, incremental compile paths, and stronger patch/rollback safety without removing earlier required behaviors.

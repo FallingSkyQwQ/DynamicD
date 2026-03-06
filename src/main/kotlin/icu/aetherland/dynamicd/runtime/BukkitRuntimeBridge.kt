@@ -4,11 +4,11 @@ import org.bukkit.Bukkit
 import org.bukkit.event.HandlerList
 import org.bukkit.event.Listener
 import org.bukkit.plugin.java.JavaPlugin
-import org.bukkit.scheduler.BukkitTask
 
 class BukkitRuntimeBridge(
     private val plugin: JavaPlugin,
     private val eventBridge: EventBridge,
+    private val scheduler: TaskScheduler = TaskSchedulerFactory.create(plugin) { plugin.logger.info(it) },
 ) : RuntimeBridge {
     override fun bindEvent(moduleId: String, eventPath: String): ListenerHandle? {
         val listener = eventBridge.createListener(moduleId, eventPath) ?: return null
@@ -26,15 +26,15 @@ class BukkitRuntimeBridge(
         val ticks = parseTicks(durationLiteral) ?: return null
 
         val task = when (timerType) {
-            "every" -> Bukkit.getScheduler().runTaskTimer(plugin, Runnable {
+            "every" -> scheduler.scheduleEvery(plugin, ticks, Runnable {
                 plugin.logger.fine("timer tick module=$moduleId duration=$durationLiteral")
-            }, ticks, ticks)
-            "after" -> Bukkit.getScheduler().runTaskLater(plugin, Runnable {
+            })
+            "after" -> scheduler.scheduleAfter(plugin, ticks, Runnable {
                 plugin.logger.fine("timer once module=$moduleId duration=$durationLiteral")
-            }, ticks)
+            })
             else -> return null
         }
-        return BukkitTaskHandle(task)
+        return task
     }
 
     private fun parseTicks(durationLiteral: String): Long? {
@@ -59,12 +59,6 @@ class BukkitRuntimeBridge(
     private class BukkitListenerHandle(private val listener: Listener) : ListenerHandle {
         override fun unregister() {
             HandlerList.unregisterAll(listener)
-        }
-    }
-
-    private class BukkitTaskHandle(private val task: BukkitTask) : TaskHandle {
-        override fun cancel() {
-            task.cancel()
         }
     }
 }

@@ -19,6 +19,7 @@ import icu.aetherland.dynamicd.security.SecurityPolicy
 import java.io.File
 import java.nio.file.Files
 import kotlin.test.Test
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class AgentLoopEngineTest {
@@ -106,5 +107,44 @@ class AgentLoopEngineTest {
         val result = engine.run("tester", AgentToolchain.SYSTEM_PERMISSIONS, "create module via json")
         assertTrue(result.success)
         assertTrue(result.summary.contains("complete"))
+    }
+
+    @Test
+    fun `loop captures plan reflect and stalls on no progress`() {
+        val root = Files.createTempDirectory("dynamicd-agent-loop-stall").toFile()
+        val moduleRoot = File(root, "modules").apply { mkdirs() }
+        val manager = ModuleManager(
+            modulesRoot = moduleRoot,
+            runtimeBridge = object : RuntimeBridge {
+                override fun bindEvent(moduleId: String, eventPath: String): ListenerHandle? = null
+                override fun bindTimer(moduleId: String, timerSpec: String): TaskHandle? = null
+            },
+            snapshotManager = SnapshotManager(File(root, "snapshots")),
+            agentToolchain = AgentToolchain(AuditLogger(File(root, "audit.log"))),
+            integrationRegistry = IntegrationRegistry.fromAvailability(
+                mapOf("PlaceholderAPI" to true, "LuckPerms" to true, "Vault" to true),
+            ),
+            placeholderBridge = InMemoryPlaceholderRegistrar(),
+            securityPolicy = SecurityPolicy(),
+            defaultSandboxLevel = SandboxLevel.ADMIN,
+            logger = {},
+        )
+
+        val provider = object : LlmProvider {
+            override val name: String = "stall"
+            override fun complete(request: LlmRequest): LlmResponse {
+                return LlmResponse("PLAN:inspect module structure\nREFLECT:waiting next step")
+            }
+        }
+        val engine = AgentLoopEngine(
+            provider = provider,
+            toolExecutor = AgentToolExecutor(manager),
+            config = AgentLoopConfig(model = "stall", maxIterations = 4, maxConsecutiveNoProgress = 1),
+        )
+        val result = engine.run("tester", AgentToolchain.SYSTEM_PERMISSIONS, "do complex task")
+        assertFalse(result.success)
+        assertTrue(result.summary.contains("loop stalled"))
+        assertTrue(result.events.any { it.type.name == "PLAN_UPDATED" })
+        assertTrue(result.events.any { it.type.name == "REFLECTION" })
     }
 }

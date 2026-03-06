@@ -13,6 +13,7 @@ import icu.aetherland.dynamicd.config.DynamicDConfig
 import icu.aetherland.dynamicd.integration.IntegrationRegistry
 import icu.aetherland.dynamicd.integration.LuckPermsBridge
 import icu.aetherland.dynamicd.integration.PlaceholderBridge
+import icu.aetherland.dynamicd.integration.spi.ExtensionRegistry
 import icu.aetherland.dynamicd.module.ModuleManager
 import icu.aetherland.dynamicd.module.ModuleStateStore
 import icu.aetherland.dynamicd.ops.LogChannel
@@ -80,6 +81,7 @@ class DynamicDPlugin : JavaPlugin() {
         )
 
         val integrationRegistry = IntegrationRegistry(server.pluginManager)
+        val extensionRegistry = ExtensionRegistry()
         val placeholderBridge = PlaceholderBridge(this)
         val luckPermsBridge = LuckPermsBridge()
 
@@ -94,6 +96,8 @@ class DynamicDPlugin : JavaPlugin() {
         logger.info("integration=${papiInstall.integration} enabled=${papiInstall.enabled} message=${papiInstall.message}")
         val lpInstall = luckPermsBridge.installIfAvailable(lpDiag.enabled)
         logger.info("integration=${lpInstall.integration} enabled=${lpInstall.enabled} message=${lpInstall.message}")
+        val loadedExtensions = extensionRegistry.autoDiscover()
+        logger.info("integration=ExtensionSPI discovered=$loadedExtensions")
 
         moduleManager = ModuleManager(
             modulesRoot = modulesRoot,
@@ -151,6 +155,7 @@ class DynamicDPlugin : JavaPlugin() {
             replEvaluator = replEvaluator,
             placeholderBridge = placeholderBridge,
             luckPermsBridge = luckPermsBridge,
+            extensionSnapshotProvider = { extensionRegistry.snapshot() },
         )
         getCommand("dd")?.setExecutor(command)
         getCommand("dd")?.tabCompleter = command

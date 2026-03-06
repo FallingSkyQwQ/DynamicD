@@ -4,6 +4,7 @@ import icu.aetherland.dynamicd.agent.AgentToolAction
 import icu.aetherland.dynamicd.agent.loop.AgentService
 import icu.aetherland.dynamicd.integration.LuckPermsBridge
 import icu.aetherland.dynamicd.integration.PlaceholderRegistrar
+import icu.aetherland.dynamicd.integration.spi.ExtensionSnapshot
 import icu.aetherland.dynamicd.module.ModuleManager
 import icu.aetherland.dynamicd.repl.ReplEvaluator
 import icu.aetherland.dynamicd.repl.ReplSessionManager
@@ -25,6 +26,7 @@ class DynamicDCommand(
     private val replEvaluator: ReplEvaluator,
     private val placeholderBridge: PlaceholderRegistrar,
     private val luckPermsBridge: LuckPermsBridge,
+    private val extensionSnapshotProvider: () -> ExtensionSnapshot,
 ) : CommandExecutor, TabCompleter {
     override fun onCommand(sender: CommandSender, command: Command, label: String, args: Array<out String>): Boolean {
         if (args.isEmpty()) {
@@ -281,6 +283,10 @@ class DynamicDCommand(
         moduleManager.integrationDiagnostics().forEach {
             sender.sendMessage("doctor integration=${it.integration} available=${it.available} enabled=${it.enabled} msg=${it.message}")
         }
+        val ext = extensionSnapshotProvider()
+        sender.sendMessage(
+            "doctor extensions=${ext.extensions.size} types=${ext.types.size} functions=${ext.functions.size} events=${ext.events.size}",
+        )
         return true
     }
 
