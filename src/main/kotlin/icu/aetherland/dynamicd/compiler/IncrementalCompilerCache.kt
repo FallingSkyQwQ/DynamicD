@@ -17,6 +17,9 @@ data class CachedFileAnalysis(
     val diagnostics: List<Diagnostic>,
     val exportedFunctions: List<String>,
     val dependencies: List<String>,
+    val records: List<String>,
+    val enums: List<String>,
+    val traits: List<String>,
     val compiledPredicates: Int,
     val throttledEvents: Int,
 )

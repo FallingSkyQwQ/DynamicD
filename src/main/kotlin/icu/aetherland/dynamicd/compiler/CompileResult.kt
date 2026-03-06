@@ -30,6 +30,9 @@ data class SymbolIndex(
     val events: List<String>,
     val commands: List<String>,
     val dependencies: List<String> = emptyList(),
+    val records: List<String> = emptyList(),
+    val enums: List<String> = emptyList(),
+    val traits: List<String> = emptyList(),
 )
 
 data class CompileResult(

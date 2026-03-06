@@ -545,6 +545,10 @@ class ModuleManager(
                 exportedFunctions = emptyList(),
                 events = emptyList(),
                 commands = emptyList(),
+                dependencies = emptyList(),
+                records = emptyList(),
+                enums = emptyList(),
+                traits = emptyList(),
             ),
             metrics = icu.aetherland.dynamicd.compiler.CompileMetrics(
                 mode = CompileMode.FULL,

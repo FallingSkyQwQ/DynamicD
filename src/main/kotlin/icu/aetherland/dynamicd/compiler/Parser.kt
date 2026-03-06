@@ -5,10 +5,13 @@ object Parser {
         var moduleName: String? = null
         var versionLiteral: String? = null
         val declarations = mutableListOf<AstDeclaration>()
-        source.lines().forEach { raw ->
-            val line = raw.trim()
+        val lines = source.lines()
+        var i = 0
+        while (i < lines.size) {
+            val line = lines[i].trim()
             if (line.isBlank() || line.startsWith("//")) {
-                return@forEach
+                i++
+                continue
             }
 
             when {
@@ -36,6 +39,53 @@ object Parser {
                     if (!path.isNullOrBlank()) {
                         declarations += UseDeclaration(path = path, alias = alias)
                     }
+                }
+                line.startsWith("record ") -> {
+                    val name = Regex("record\\s+(\\w+)").find(line)?.groupValues?.getOrNull(1)
+                    if (!name.isNullOrBlank()) {
+                        declarations += RecordDeclaration(name)
+                    }
+                }
+                line.startsWith("enum ") -> {
+                    val name = Regex("enum\\s+(\\w+)").find(line)?.groupValues?.getOrNull(1)
+                    if (!name.isNullOrBlank()) {
+                        val variants = mutableListOf<String>()
+                        var j = i + 1
+                        while (j < lines.size) {
+                            val raw = lines[j].trim()
+                            if (raw.startsWith("}")) break
+                            val variant = Regex("^(\\w+)$").find(raw)?.groupValues?.getOrNull(1)
+                            if (!variant.isNullOrBlank()) {
+                                variants += variant
+                            }
+                            j++
+                        }
+                        declarations += EnumDeclaration(name, variants)
+                    }
+                }
+                line.startsWith("trait ") -> {
+                    val name = Regex("trait\\s+(\\w+)").find(line)?.groupValues?.getOrNull(1)
+                    if (!name.isNullOrBlank()) {
+                        declarations += TraitDeclaration(name)
+                    }
+                }
+                line.startsWith("impl ") -> {
+                    val m = Regex("impl\\s+(\\w+)\\s+for\\s+(\\w+)").find(line)
+                    if (m != null) {
+                        declarations += ImplDeclaration(
+                            traitName = m.groupValues[1],
+                            targetType = m.groupValues[2],
+                        )
+                    }
+                }
+                line.startsWith("match ") -> {
+                    val targetExpression = line.removePrefix("match ").substringBefore("{").trim()
+                    val details = collectMatchDetails(lines, i)
+                    declarations += MatchDeclaration(
+                        targetExpression = targetExpression,
+                        hasElseBranch = details.first,
+                        caseCount = details.second,
+                    )
                 }
                 line.startsWith("export fn ") || line.startsWith("fn ") -> {
                     val exported = line.startsWith("export fn ")
@@ -106,6 +156,7 @@ object Parser {
                     declarations.add(TimerDeclaration("after", duration))
                 }
             }
+            i++
         }
 
         return AstModule(
@@ -113,5 +164,32 @@ object Parser {
             versionLiteral = versionLiteral,
             declarations = declarations,
         )
+    }
+
+    private fun collectMatchDetails(lines: List<String>, startIndex: Int): Pair<Boolean, Int> {
+        var depth = 0
+        var caseCount = 0
+        var hasElse = false
+        var i = startIndex
+        while (i < lines.size) {
+            val line = lines[i]
+            if (line.contains("{")) {
+                depth += line.count { it == '{' }
+            }
+            if (line.contains("case ")) {
+                caseCount++
+            }
+            if (Regex("\\belse\\b").containsMatchIn(line)) {
+                hasElse = true
+            }
+            if (line.contains("}")) {
+                depth -= line.count { it == '}' }
+                if (depth <= 0 && i > startIndex) {
+                    break
+                }
+            }
+            i++
+        }
+        return hasElse to caseCount
     }
 }

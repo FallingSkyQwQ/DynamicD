@@ -39,6 +39,9 @@ object CompilerFacade {
         val requiredIntegrations = mutableSetOf<String>()
         val exportedFunctions = mutableListOf<String>()
         val dependencies = mutableListOf<String>()
+        val records = mutableListOf<String>()
+        val enums = mutableListOf<String>()
+        val traits = mutableListOf<String>()
         var compiledPredicates = 0
         var throttledEvents = 0
 
@@ -60,6 +63,9 @@ object CompilerFacade {
                     requiredIntegrations.addAll(cached.integrations)
                     exportedFunctions.addAll(cached.exportedFunctions)
                     dependencies.addAll(cached.dependencies)
+                    records.addAll(cached.records)
+                    enums.addAll(cached.enums)
+                    traits.addAll(cached.traits)
                     compiledPredicates += cached.compiledPredicates
                     throttledEvents += cached.throttledEvents
                     return@forEach
@@ -94,6 +100,9 @@ object CompilerFacade {
                     .map { it.path }
                     .filter { it.startsWith("dynamicd:") }
                     .map { it.substringAfter("dynamicd:") }
+                val declaredRecords = ast.declarations.filterIsInstance<RecordDeclaration>().map { it.name }
+                val declaredEnums = ast.declarations.filterIsInstance<EnumDeclaration>().map { it.name }
+                val declaredTraits = ast.declarations.filterIsInstance<TraitDeclaration>().map { it.name }
 
                 allEvents.addAll(events)
                 allCommands.addAll(commands)
@@ -103,6 +112,9 @@ object CompilerFacade {
                 requiredIntegrations.addAll(integrations)
                 exportedFunctions.addAll(functions)
                 dependencies.addAll(deps)
+                records.addAll(declaredRecords)
+                enums.addAll(declaredEnums)
+                traits.addAll(declaredTraits)
 
                 incrementalCache.put(
                     moduleId,
@@ -119,6 +131,9 @@ object CompilerFacade {
                         diagnostics = stageDiagnostics,
                         exportedFunctions = functions,
                         dependencies = deps,
+                        records = declaredRecords,
+                        enums = declaredEnums,
+                        traits = declaredTraits,
                         compiledPredicates = eventDecls.count { !it.whereClause.isNullOrBlank() },
                         throttledEvents = eventDecls.count { !it.throttleLiteral.isNullOrBlank() },
                     ),
@@ -146,6 +161,9 @@ object CompilerFacade {
                 events = allEvents.distinct(),
                 commands = allCommands.distinct(),
                 dependencies = dependencies.distinct(),
+                records = records.distinct(),
+                enums = enums.distinct(),
+                traits = traits.distinct(),
             ),
             metrics = CompileMetrics(
                 mode = mode,
@@ -240,7 +258,16 @@ object CompilerFacade {
                 requiredIntegrations = emptySet(),
                 dependencyImports = emptyList(),
             ),
-            symbolIndex = SymbolIndex(moduleId, emptyList(), emptyList(), emptyList(), emptyList()),
+            symbolIndex = SymbolIndex(
+                moduleId = moduleId,
+                exportedFunctions = emptyList(),
+                events = emptyList(),
+                commands = emptyList(),
+                dependencies = emptyList(),
+                records = emptyList(),
+                enums = emptyList(),
+                traits = emptyList(),
+            ),
             metrics = CompileMetrics(
                 mode = mode,
                 totalMillis = 0,

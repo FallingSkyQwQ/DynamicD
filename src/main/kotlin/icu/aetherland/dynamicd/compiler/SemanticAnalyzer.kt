@@ -7,6 +7,9 @@ object SemanticAnalyzer {
         val diagnostics = mutableListOf<Diagnostic>()
         diagnostics += checkModuleHeader(file, ast)
         diagnostics += checkDuplicateDeclarations(file, source, ast)
+        diagnostics += checkImplBindings(file, ast)
+        diagnostics += checkMatchCoverage(file, ast)
+        diagnostics += checkResultFlow(file, source)
         diagnostics += checkNullableGuards(file, source)
         diagnostics += checkAsyncEffects(file, source)
         return diagnostics
@@ -55,6 +58,9 @@ object SemanticAnalyzer {
             val symbol = when (decl) {
                 is FunctionDeclaration -> "fn:${decl.name}"
                 is StateDeclaration -> "state:${decl.name}"
+                is RecordDeclaration -> "record:${decl.name}"
+                is EnumDeclaration -> "enum:${decl.name}"
+                is TraitDeclaration -> "trait:${decl.name}"
                 else -> null
             }
             if (symbol != null) {
@@ -77,6 +83,115 @@ object SemanticAnalyzer {
                     suggestion = "Rename or merge duplicated declarations",
                 )
             }
+        return diagnostics
+    }
+
+    private fun checkImplBindings(file: File, ast: AstModule): List<Diagnostic> {
+        val diagnostics = mutableListOf<Diagnostic>()
+        val traits = ast.declarations.filterIsInstance<TraitDeclaration>().map { it.name }.toSet()
+        val types = mutableSetOf<String>()
+        types += ast.declarations.filterIsInstance<RecordDeclaration>().map { it.name }
+        types += ast.declarations.filterIsInstance<EnumDeclaration>().map { it.name }
+        types += setOf("Int", "Long", "Float", "Double", "Bool", "String", "Player", "World")
+
+        ast.declarations.filterIsInstance<ImplDeclaration>().forEach { decl ->
+            if (decl.traitName !in traits) {
+                diagnostics += Diagnostic(
+                    code = "E0601",
+                    level = DiagnosticLevel.ERROR,
+                    stage = DiagnosticStage.RESOLVE,
+                    message = "Impl references unknown trait `${decl.traitName}`",
+                    file = file.name,
+                    line = 1,
+                    column = 1,
+                    expected = "known trait",
+                    actual = decl.traitName,
+                    suggestion = "Declare trait `${decl.traitName}` before impl",
+                )
+            }
+            if (decl.targetType !in types) {
+                diagnostics += Diagnostic(
+                    code = "E0602",
+                    level = DiagnosticLevel.ERROR,
+                    stage = DiagnosticStage.TYPE,
+                    message = "Impl target type `${decl.targetType}` is not defined",
+                    file = file.name,
+                    line = 1,
+                    column = 1,
+                    expected = "known type",
+                    actual = decl.targetType,
+                    suggestion = "Declare record/enum `${decl.targetType}` or use a builtin type",
+                )
+            }
+        }
+        return diagnostics
+    }
+
+    private fun checkMatchCoverage(file: File, ast: AstModule): List<Diagnostic> {
+        val diagnostics = mutableListOf<Diagnostic>()
+        ast.declarations.filterIsInstance<MatchDeclaration>().forEach { decl ->
+            if (!decl.hasElseBranch && decl.caseCount == 0) {
+                diagnostics += Diagnostic(
+                    code = "E0603",
+                    level = DiagnosticLevel.ERROR,
+                    stage = DiagnosticStage.TYPE,
+                    message = "match requires at least one case or else branch",
+                    file = file.name,
+                    line = 1,
+                    column = 1,
+                    expected = "case/else branch",
+                    actual = "empty match",
+                    suggestion = "Add at least one case or an else branch",
+                )
+            } else if (!decl.hasElseBranch) {
+                diagnostics += Diagnostic(
+                    code = "W0604",
+                    level = DiagnosticLevel.WARNING,
+                    stage = DiagnosticStage.TYPE,
+                    message = "match without else may be non-exhaustive",
+                    file = file.name,
+                    line = 1,
+                    column = 1,
+                    suggestion = "Add else branch for safer exhaustive behavior",
+                )
+            }
+        }
+        return diagnostics
+    }
+
+    private fun checkResultFlow(file: File, source: String): List<Diagnostic> {
+        val diagnostics = mutableListOf<Diagnostic>()
+        val lines = source.lines()
+        var inResultFn = false
+        var fnDepth = 0
+        lines.forEachIndexed { idx, raw ->
+            val line = raw.trim()
+            if (line.startsWith("fn ") || line.startsWith("export fn ")) {
+                inResultFn = Regex("->\\s*Result<").containsMatchIn(line)
+                fnDepth = line.count { it == '{' } - line.count { it == '}' }
+            } else if (fnDepth > 0) {
+                fnDepth += line.count { it == '{' }
+                fnDepth -= line.count { it == '}' }
+                if (fnDepth <= 0) {
+                    inResultFn = false
+                }
+            }
+            if (line.contains("?") && !inResultFn) {
+                diagnostics += Diagnostic(
+                    code = "E0701",
+                    level = DiagnosticLevel.ERROR,
+                    stage = DiagnosticStage.TYPE,
+                    message = "`?` operator requires Result-returning function context",
+                    file = file.name,
+                    line = idx + 1,
+                    column = line.indexOf('?') + 1,
+                    expected = "fn ... -> Result<T,E>",
+                    actual = "non-Result context",
+                    suggestion = "Change function return type to Result<T,E> or handle result explicitly",
+                    contextSnippet = raw,
+                )
+            }
+        }
         return diagnostics
     }
 

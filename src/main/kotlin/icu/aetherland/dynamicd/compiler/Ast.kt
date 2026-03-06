@@ -20,6 +20,30 @@ data class FunctionDeclaration(
     val exported: Boolean,
 ) : AstDeclaration
 
+data class RecordDeclaration(
+    val name: String,
+) : AstDeclaration
+
+data class EnumDeclaration(
+    val name: String,
+    val variants: List<String>,
+) : AstDeclaration
+
+data class TraitDeclaration(
+    val name: String,
+) : AstDeclaration
+
+data class ImplDeclaration(
+    val traitName: String,
+    val targetType: String,
+) : AstDeclaration
+
+data class MatchDeclaration(
+    val targetExpression: String,
+    val hasElseBranch: Boolean,
+    val caseCount: Int,
+) : AstDeclaration
+
 data class StateDeclaration(
     val name: String,
     val persistent: Boolean,

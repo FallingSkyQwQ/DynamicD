@@ -37,6 +37,10 @@
 - yuz 前端重建（全规范级第一里程碑）
   - Implementation: typed lexer (`TokenType`, block-comment/string diagnostics), parser扩展（`module/version/use/export fn/state/persist/placeholder`）, semantic analyzer entry (`module required`, duplicate symbol, nullable/effect checks).
   - Tests: `LexerTest`, `CompilerFacadeTest.requires module declaration`, `CompilerFacadeTest.only exported functions are in symbol index`.
+- yuz 语义系统扩展（全规范级第二里程碑）
+  - Implementation: parser & AST support for `record/enum/trait/impl/match`, semantic validation for impl trait/target binding (`E0601/E0602`), match coverage warning/error (`W0604/E0603`), and Result flow guard for `?` operator (`E0701`).
+  - Symbol index extended with `records/enums/traits`.
+  - Tests: `CompilerFacadeTest.fails impl target and trait validation`, `CompilerFacadeTest.fails question mark outside result context`, `CompilerFacadeTest.match without else emits warning`.
 - 模块依赖图可视化
   - Implementation: `ModuleManager.moduleDependencyGraph/moduleLoadOrder` + `/dd modules graph`.
   - Tests: `ModuleManagerTest.dependency graph and load order are built from use dynamicd imports`.
