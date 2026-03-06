@@ -4,6 +4,7 @@ import icu.aetherland.dynamicd.agent.AgentToolchain
 import icu.aetherland.dynamicd.agent.llm.OpenAiCompatibleProvider
 import icu.aetherland.dynamicd.agent.loop.AgentLoopConfig
 import icu.aetherland.dynamicd.agent.loop.AgentLoopEngine
+import icu.aetherland.dynamicd.agent.loop.AgentMemoryStore
 import icu.aetherland.dynamicd.agent.loop.AgentSessionStore
 import icu.aetherland.dynamicd.agent.loop.AgentService
 import icu.aetherland.dynamicd.agent.loop.AgentToolExecutor
@@ -17,6 +18,7 @@ import icu.aetherland.dynamicd.integration.spi.ExtensionRegistry
 import icu.aetherland.dynamicd.module.ModuleManager
 import icu.aetherland.dynamicd.module.ModuleStateStore
 import icu.aetherland.dynamicd.ops.LogChannel
+import icu.aetherland.dynamicd.ops.BenchService
 import icu.aetherland.dynamicd.ops.SnapshotManager
 import icu.aetherland.dynamicd.ops.StructuredLogger
 import icu.aetherland.dynamicd.persist.PersistStore
@@ -140,7 +142,9 @@ class DynamicDPlugin : JavaPlugin() {
         val agentService = AgentService(
             engine = loopEngine,
             sessionStore = AgentSessionStore(File(dataFolder, "workspace/agent")),
+            memoryStore = AgentMemoryStore(File(dataFolder, "workspace/agent/memory")),
         )
+        val benchService = BenchService(moduleManager, File(dataFolder, "data/bench/latest.report"))
         val replSessionManager = ReplSessionManager(dynamicDConfig.repl.timeoutSeconds)
         val replEvaluator = ReplEvaluator(
             securityPolicy = SecurityPolicy(),
@@ -158,6 +162,7 @@ class DynamicDPlugin : JavaPlugin() {
             placeholderBridge = placeholderBridge,
             luckPermsBridge = luckPermsBridge,
             extensionSnapshotProvider = { extensionRegistry.snapshot() },
+            benchService = benchService,
         )
         getCommand("dd")?.setExecutor(command)
         getCommand("dd")?.tabCompleter = command

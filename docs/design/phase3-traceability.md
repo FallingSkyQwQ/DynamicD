@@ -45,12 +45,16 @@
   - Tests: `AstPatchEngineTest.ast patch upsert use is idempotent`.
 - 更强 Agent 循环
   - Implementation: `PLAN/TOOL/REFLECT/FINAL` protocol parser, no-progress stall detection, prompt decomposition seed plan, batch tool calls for read/search/list, and optional self-check retry loop.
-  - Tests: `AgentLoopEngineTest.loop captures plan reflect and stalls on no progress`, `AgentLoopEngineTest.loop retries when self check fails then succeeds`, `AgentProtocolTest`.
+  - Enhancement: `AgentMemoryStore` long-horizon session memory (read recent context, append result memory).
+  - Tests: `AgentLoopEngineTest.loop captures plan reflect and stalls on no progress`, `AgentLoopEngineTest.loop retries when self check fails then succeeds`, `AgentProtocolTest`, `AgentServiceTest.service persists session logs`.
 - 宿主扩展 SPI 生态化
   - Implementation: `integration.spi` (`YuzHostExtension`, `ExtensionRegistry`, in-memory registries, ServiceLoader discover).
   - Tests: `ExtensionRegistryTest.registry records extension published contracts`.
 - Folia 预适配
   - Implementation: runtime `TaskScheduler` abstraction + reflective `FoliaScheduler` + Bukkit fallback.
+- 生产压测结论基础能力
+  - Implementation: `BenchService` and `/dd bench run|report` (cold/warm compile, reload latency, incremental reuse ratio).
+  - Tests: `BenchServiceTest.runs and persists benchmark report`.
 
 ## Alignment Notes
 - Phase 1/2 traceability remains valid; Phase 3 introduced stricter diagnostics, incremental compile paths, and stronger patch/rollback safety without removing earlier required behaviors.

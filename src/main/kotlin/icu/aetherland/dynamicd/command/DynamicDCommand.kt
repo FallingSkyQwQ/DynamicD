@@ -6,6 +6,7 @@ import icu.aetherland.dynamicd.integration.LuckPermsBridge
 import icu.aetherland.dynamicd.integration.PlaceholderRegistrar
 import icu.aetherland.dynamicd.integration.spi.ExtensionSnapshot
 import icu.aetherland.dynamicd.module.ModuleManager
+import icu.aetherland.dynamicd.ops.BenchService
 import icu.aetherland.dynamicd.repl.ReplEvaluator
 import icu.aetherland.dynamicd.repl.ReplSessionManager
 import icu.aetherland.dynamicd.security.ConfirmationManager
@@ -27,6 +28,7 @@ class DynamicDCommand(
     private val placeholderBridge: PlaceholderRegistrar,
     private val luckPermsBridge: LuckPermsBridge,
     private val extensionSnapshotProvider: () -> ExtensionSnapshot,
+    private val benchService: BenchService,
 ) : CommandExecutor, TabCompleter {
     override fun onCommand(sender: CommandSender, command: Command, label: String, args: Array<out String>): Boolean {
         if (args.isEmpty()) {
@@ -38,6 +40,7 @@ class DynamicDCommand(
             sender.sendMessage("/dd perms sync")
             sender.sendMessage("/dd doctor")
             sender.sendMessage("/dd confirm <token>")
+            sender.sendMessage("/dd bench <run|report>")
             return true
         }
         val operator = sender.name
@@ -51,6 +54,7 @@ class DynamicDCommand(
             "perms" -> handlePerms(sender, args.drop(1))
             "doctor" -> handleDoctor(sender)
             "confirm" -> handleConfirm(sender, operator, permissions, args.drop(1))
+            "bench" -> handleBench(sender, args.drop(1))
             else -> {
                 sender.sendMessage("Unknown subcommand")
                 true
@@ -326,6 +330,46 @@ class DynamicDCommand(
         return true
     }
 
+    private fun handleBench(sender: CommandSender, args: List<String>): Boolean {
+        if (args.isEmpty()) {
+            sender.sendMessage("Usage: /dd bench <run|report>")
+            return true
+        }
+        return when (args[0].lowercase()) {
+            "run" -> {
+                if (args.size < 2) {
+                    sender.sendMessage("Usage: /dd bench run <moduleId> [iterations]")
+                    return true
+                }
+                val moduleId = args[1]
+                val iterations = args.getOrNull(2)?.toIntOrNull() ?: 8
+                val report = benchService.run(moduleId, iterations)
+                sender.sendMessage(
+                    "bench module=${report.moduleId} cold=${report.compileColdMs}ms warmAvg=${report.compileWarmAvgMs}ms " +
+                        "reloadAvg=${report.reloadAvgMs}ms reuse=${"%.2f".format(report.incrementalReuseRatio)}",
+                )
+                true
+            }
+            "report" -> {
+                val report = benchService.latest()
+                if (report == null) {
+                    sender.sendMessage("No bench report yet, run /dd bench run <moduleId>")
+                    return true
+                }
+                sender.sendMessage(
+                    "bench latest module=${report.moduleId} iterations=${report.iterations} " +
+                        "cold=${report.compileColdMs}ms warmAvg=${report.compileWarmAvgMs}ms " +
+                        "reloadAvg=${report.reloadAvgMs}ms reuse=${"%.2f".format(report.incrementalReuseRatio)}",
+                )
+                true
+            }
+            else -> {
+                sender.sendMessage("Usage: /dd bench <run|report>")
+                true
+            }
+        }
+    }
+
     private fun collectPermissions(sender: CommandSender): Set<String> {
         val all = mutableSetOf<String>()
         AgentToolAction.entries.forEach { action ->
@@ -382,7 +426,7 @@ class DynamicDCommand(
         args: Array<out String>,
     ): MutableList<String> {
         if (args.size == 1) {
-            return mutableListOf("modules", "snapshot", "agent", "repl", "papi", "perms", "doctor", "confirm")
+            return mutableListOf("modules", "snapshot", "agent", "repl", "papi", "perms", "doctor", "confirm", "bench")
                 .filter { it.startsWith(args[0], ignoreCase = true) }
                 .toMutableList()
         }
@@ -406,6 +450,9 @@ class DynamicDCommand(
         }
         if (args.size == 2 && args[0].equals("perms", ignoreCase = true)) {
             return mutableListOf("sync").filter { it.startsWith(args[1], ignoreCase = true) }.toMutableList()
+        }
+        if (args.size == 2 && args[0].equals("bench", ignoreCase = true)) {
+            return mutableListOf("run", "report").filter { it.startsWith(args[1], ignoreCase = true) }.toMutableList()
         }
         return mutableListOf()
     }

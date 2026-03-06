@@ -5,6 +5,7 @@ import icu.aetherland.dynamicd.agent.llm.LlmRequest
 import icu.aetherland.dynamicd.agent.llm.LlmResponse
 import icu.aetherland.dynamicd.agent.loop.AgentLoopConfig
 import icu.aetherland.dynamicd.agent.loop.AgentLoopEngine
+import icu.aetherland.dynamicd.agent.loop.AgentMemoryStore
 import icu.aetherland.dynamicd.agent.loop.AgentService
 import icu.aetherland.dynamicd.agent.loop.AgentSessionStore
 import icu.aetherland.dynamicd.agent.loop.AgentToolExecutor
@@ -21,6 +22,7 @@ import icu.aetherland.dynamicd.security.SecurityPolicy
 import java.io.File
 import java.nio.file.Files
 import kotlin.test.Test
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class AgentServiceTest {
@@ -48,11 +50,15 @@ class AgentServiceTest {
         val service = AgentService(
             engine = AgentLoopEngine(provider, AgentToolExecutor(manager), AgentLoopConfig("fixed", 2)),
             sessionStore = AgentSessionStore(File(root, "workspace/agent")),
+            memoryStore = AgentMemoryStore(File(root, "workspace/agent/memory")),
         )
         val result = service.runPrompt("tester", AgentToolchain.SYSTEM_PERMISSIONS, "hello")
         assertTrue(result.success)
         val files = File(root, "workspace/agent").listFiles().orEmpty()
         assertTrue(files.isNotEmpty())
         assertTrue(files.first().readText().contains("requestId="))
+        val memoryFiles = File(root, "workspace/agent/memory").listFiles().orEmpty()
+        assertFalse(memoryFiles.isEmpty())
+        assertTrue(memoryFiles.first().readText().contains("hello"))
     }
 }
