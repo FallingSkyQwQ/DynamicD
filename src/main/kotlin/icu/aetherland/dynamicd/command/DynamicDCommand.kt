@@ -352,7 +352,8 @@ class DynamicDCommand(
                         "reloadOk=${"%.2f".format(report.reloadSuccessRate)} events/s=${"%.2f".format(report.eventThroughputPerSec)} " +
                         "agentOk=${"%.2f".format(report.agentSuccessRate)} soakSamples=${report.soakSamples} " +
                         "soak[start/mid/end]=${report.soakStartReloadMs}/${report.soakMidReloadMs}/${report.soakEndReloadMs} " +
-                        "failure=${report.failureSample ?: "none"}",
+                        "failure=${report.failureSample ?: "none"} failCount=${report.failureCount} " +
+                        "trend=${"%.2f".format(report.reloadSuccessTrendDelta)}",
                 )
                 true
             }
@@ -361,11 +362,13 @@ class DynamicDCommand(
                 val scenario = args.getOrNull(2)?.let { parseScenario(it) } ?: BenchScenario.MIXED
                 val report = benchService.runSuite(iterations, scenario)
                 sender.sendMessage(
-                    "bench suite scenario=${report.scenario} modules=${report.moduleCount} iterations=${report.iterations} " +
-                        "warmAvg=${report.avgCompileWarmMs}ms reloadAvg=${report.avgReloadMs}ms " +
-                        "reloadOk=${"%.2f".format(report.avgReloadSuccessRate)} events/s=${"%.2f".format(report.avgEventThroughputPerSec)} " +
-                        "failed=${if (report.failedModules.isEmpty()) "none" else report.failedModules.joinToString(",")}",
-                )
+                        "bench suite scenario=${report.scenario} modules=${report.moduleCount} iterations=${report.iterations} " +
+                            "warmAvg=${report.avgCompileWarmMs}ms reloadAvg=${report.avgReloadMs}ms " +
+                            "reloadOk=${"%.2f".format(report.avgReloadSuccessRate)} events/s=${"%.2f".format(report.avgEventThroughputPerSec)} " +
+                            "failed=${if (report.failedModules.isEmpty()) "none" else report.failedModules.joinToString(",")} " +
+                            "failedCount=${report.failedModuleCount} buckets=${report.failureBuckets} " +
+                            "trend=${"%.2f".format(report.avgReloadSuccessTrendDelta)}",
+                    )
                 true
             }
             "report" -> {
@@ -395,7 +398,8 @@ class DynamicDCommand(
                         "reloadOk=${"%.2f".format(report.reloadSuccessRate)} events/s=${"%.2f".format(report.eventThroughputPerSec)} " +
                         "agentOk=${"%.2f".format(report.agentSuccessRate)} soakSamples=${report.soakSamples} " +
                         "soak[start/mid/end]=${report.soakStartReloadMs}/${report.soakMidReloadMs}/${report.soakEndReloadMs} " +
-                        "failure=${report.failureSample ?: "none"}",
+                        "failure=${report.failureSample ?: "none"} failCount=${report.failureCount} " +
+                        "trend=${"%.2f".format(report.reloadSuccessTrendDelta)}",
                 )
                 true
             }

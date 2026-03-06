@@ -68,6 +68,7 @@ class BenchServiceTest {
         assertTrue(report.soakStartReloadMs >= 0)
         assertTrue(report.soakMidReloadMs >= 0)
         assertTrue(report.soakEndReloadMs >= 0)
+        assertTrue(report.failureCount >= 0)
 
         val latest = service.latest()
         assertNotNull(latest)
@@ -79,6 +80,7 @@ class BenchServiceTest {
         val suite = service.runSuite(2, BenchScenario.MIXED)
         assertEquals(1, suite.moduleCount)
         assertEquals(BenchScenario.MIXED, suite.scenario)
+        assertTrue(suite.failedModuleCount >= 0)
         val latestSuite = service.latestSuite()
         assertNotNull(latestSuite)
         assertEquals(1, latestSuite.moduleCount)

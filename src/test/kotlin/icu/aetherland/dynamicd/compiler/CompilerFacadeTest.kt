@@ -195,6 +195,24 @@ class CompilerFacadeTest {
     }
 
     @Test
+    fun `nullable type marker does not trigger unwrap operator error`() {
+        val dir = Files.createTempDirectory("dynamicd-mod").toFile()
+        File(dir, "mod.yuz").writeText(
+            """
+            module "dynamicd:welcome"
+            fn test() {
+              let target: Player? = null
+              guard target != null else { return }
+              tell target.name
+            }
+            """.trimIndent(),
+        )
+        val result = CompilerFacade.compileModule("welcome", dir)
+        assertTrue(result.success)
+        assertTrue(result.diagnostics.none { it.code == "E0701" })
+    }
+
+    @Test
     fun `fails ok err return outside result function`() {
         val dir = Files.createTempDirectory("dynamicd-mod").toFile()
         File(dir, "mod.yuz").writeText(

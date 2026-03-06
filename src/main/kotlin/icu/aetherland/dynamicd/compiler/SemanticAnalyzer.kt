@@ -8,7 +8,7 @@ object SemanticAnalyzer {
         diagnostics += checkModuleHeader(file, ast)
         diagnostics += checkDuplicateDeclarations(file, source, ast)
         diagnostics += checkImplBindings(file, ast)
-        diagnostics += checkMatchCoverage(file, ast)
+        diagnostics += checkMatchCoverage(file, source, ast)
         diagnostics += checkResultFlow(file, source)
         diagnostics += checkNullableGuards(file, source)
         diagnostics += checkAsyncEffects(file, source)
@@ -203,10 +203,11 @@ object SemanticAnalyzer {
         return diagnostics
     }
 
-    private fun checkMatchCoverage(file: File, ast: AstModule): List<Diagnostic> {
+    private fun checkMatchCoverage(file: File, source: String, ast: AstModule): List<Diagnostic> {
         val diagnostics = mutableListOf<Diagnostic>()
         val enumMap = ast.declarations.filterIsInstance<EnumDeclaration>().associateBy { it.name }
         val inferredTypeMap = inferLocalTypes(file, ast)
+        val resultVars = inferResultVars(source)
         ast.declarations.filterIsInstance<MatchDeclaration>().forEach { decl ->
             if (!decl.hasElseBranch && decl.caseCount == 0) {
                 diagnostics += Diagnostic(
@@ -254,8 +255,9 @@ object SemanticAnalyzer {
                 )
             }
 
-            val resultCaseSet = decl.caseLabels.map { it.substringBefore("(") }.toSet()
-            if (!decl.hasElseBranch && ("ok" in resultCaseSet || "err" in resultCaseSet)) {
+            val resultCaseSet = decl.caseLabels.map { it.substringBefore("(").lowercase() }.toSet()
+            val targetLooksResult = decl.targetExpression in resultVars
+            if (!decl.hasElseBranch && (targetLooksResult || "ok" in resultCaseSet || "err" in resultCaseSet)) {
                 if (!resultCaseSet.containsAll(setOf("ok", "err"))) {
                     diagnostics += Diagnostic(
                         code = "E0703",
@@ -292,7 +294,7 @@ object SemanticAnalyzer {
                     inResultFn = false
                 }
             }
-            if (line.contains("?") && !inResultFn) {
+            if (containsResultUnwrapOperator(line) && !inResultFn) {
                 diagnostics += Diagnostic(
                     code = "E0701",
                     level = DiagnosticLevel.ERROR,
@@ -326,6 +328,12 @@ object SemanticAnalyzer {
         return diagnostics
     }
 
+    private fun containsResultUnwrapOperator(line: String): Boolean {
+        val noComment = line.substringBefore("//")
+        if (noComment.isBlank()) return false
+        return Regex("\\)\\s*\\?$|\\b\\w+\\s*\\?$").containsMatchIn(noComment.trim())
+    }
+
     private fun inferLocalTypes(file: File, ast: AstModule): Map<String, String> {
         val knownEnums = ast.declarations.filterIsInstance<EnumDeclaration>().map { it.name }.toSet()
         val result = mutableMapOf<String, String>()
@@ -344,6 +352,25 @@ object SemanticAnalyzer {
                 if (enumType in knownEnums) {
                     result[enumCtor.groupValues[2]] = enumType
                 }
+            }
+        }
+        return result
+    }
+
+    private fun inferResultVars(source: String): Set<String> {
+        val result = mutableSetOf<String>()
+        source.lines().forEach { raw ->
+            val line = raw.trim()
+            val typed = Regex("(let|var|state|persist)\\s+(\\w+)\\s*:\\s*Result<")
+                .find(line)
+            if (typed != null) {
+                result += typed.groupValues[2]
+                return@forEach
+            }
+            val inferred = Regex("(let|var)\\s+(\\w+)\\s*=\\s*(ok|err)\\s*\\(")
+                .find(line)
+            if (inferred != null) {
+                result += inferred.groupValues[2]
             }
         }
         return result
