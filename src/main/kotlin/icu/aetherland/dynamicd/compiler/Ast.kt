@@ -15,9 +15,16 @@ data class UseDeclaration(
     val alias: String? = null,
 ) : AstDeclaration
 
+data class FunctionSignature(
+    val name: String,
+    val paramCount: Int,
+    val returnType: String?,
+)
+
 data class FunctionDeclaration(
     val name: String,
     val exported: Boolean,
+    val signature: FunctionSignature,
 ) : AstDeclaration
 
 data class RecordDeclaration(
@@ -31,13 +38,13 @@ data class EnumDeclaration(
 
 data class TraitDeclaration(
     val name: String,
-    val methods: List<String>,
+    val methods: List<FunctionSignature>,
 ) : AstDeclaration
 
 data class ImplDeclaration(
     val traitName: String,
     val targetType: String,
-    val methods: List<String>,
+    val methods: List<FunctionSignature>,
 ) : AstDeclaration
 
 data class MatchDeclaration(

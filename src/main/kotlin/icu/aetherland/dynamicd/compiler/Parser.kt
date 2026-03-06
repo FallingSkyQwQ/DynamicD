@@ -68,7 +68,7 @@ object Parser {
                 line.startsWith("trait ") -> {
                     val name = Regex("trait\\s+(\\w+)").find(line)?.groupValues?.getOrNull(1)
                     if (!name.isNullOrBlank()) {
-                        declarations += TraitDeclaration(name, collectFunctionNames(lines, i))
+                        declarations += TraitDeclaration(name, collectFunctionSignatures(lines, i))
                         i = findBlockEndIndex(lines, i)
                     }
                 }
@@ -78,7 +78,7 @@ object Parser {
                         declarations += ImplDeclaration(
                             traitName = m.groupValues[1],
                             targetType = m.groupValues[2],
-                            methods = collectFunctionNames(lines, i),
+                            methods = collectFunctionSignatures(lines, i),
                         )
                         i = findBlockEndIndex(lines, i)
                     }
@@ -99,7 +99,8 @@ object Parser {
                     val m = Regex("(export\\s+)?fn\\s+(\\w+)\\s*\\(").find(line)
                     val fn = m?.groupValues?.getOrNull(2)
                     if (!fn.isNullOrBlank()) {
-                        declarations += FunctionDeclaration(name = fn, exported = exported)
+                        val signature = parseFunctionSignature(line) ?: FunctionSignature(fn, 0, null)
+                        declarations += FunctionDeclaration(name = fn, exported = exported, signature = signature)
                     }
                 }
                 line.startsWith("state ") || line.startsWith("persist ") -> {
@@ -173,18 +174,18 @@ object Parser {
         )
     }
 
-    private fun collectFunctionNames(lines: List<String>, startIndex: Int): List<String> {
+    private fun collectFunctionSignatures(lines: List<String>, startIndex: Int): List<FunctionSignature> {
         var depth = 0
         var i = startIndex
-        val methods = mutableListOf<String>()
+        val methods = mutableListOf<FunctionSignature>()
         while (i < lines.size) {
             val line = lines[i]
             if (line.contains("{")) {
                 depth += line.count { it == '{' }
             }
-            val method = Regex("\\bfn\\s+(\\w+)\\s*\\(").find(line)?.groupValues?.getOrNull(1)
-            if (!method.isNullOrBlank()) {
-                methods += method
+            val signature = parseFunctionSignature(line)
+            if (signature != null) {
+                methods += signature
             }
             if (line.contains("}")) {
                 depth -= line.count { it == '}' }
@@ -194,7 +195,7 @@ object Parser {
             }
             i++
         }
-        return methods.distinct()
+        return methods.distinctBy { it.name }
     }
 
     private fun findBlockEndIndex(lines: List<String>, startIndex: Int): Int {
@@ -248,4 +249,13 @@ object Parser {
         val hasElse: Boolean,
         val caseLabels: List<String>,
     )
+
+    private fun parseFunctionSignature(line: String): FunctionSignature? {
+        val m = Regex("\\bfn\\s+(\\w+)\\s*\\(([^)]*)\\)\\s*(->\\s*([^\\s{]+))?").find(line) ?: return null
+        val name = m.groupValues[1]
+        val paramsRaw = m.groupValues[2].trim()
+        val paramCount = if (paramsRaw.isBlank()) 0 else paramsRaw.split(",").count { it.trim().isNotBlank() }
+        val returnType = m.groupValues.getOrNull(4)?.trim()?.ifBlank { null }
+        return FunctionSignature(name = name, paramCount = paramCount, returnType = returnType)
+    }
 }

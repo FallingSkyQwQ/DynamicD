@@ -54,19 +54,22 @@ class BenchServiceTest {
 
         val reportFile = File(root, "data/bench/latest.report")
         val service = BenchService(manager, reportFile) { AgentRuntimeStats(totalRuns = 10, successfulRuns = 7) }
-        val report = service.run("welcome", 3)
+        val report = service.run("welcome", 3, BenchScenario.SOAK)
         assertEquals("welcome", report.moduleId)
         assertEquals(3, report.iterations)
+        assertEquals(BenchScenario.SOAK, report.scenario)
         assertTrue(report.compileColdMs >= 0)
         assertTrue(report.compileWarmAvgMs >= 0)
         assertTrue(report.reloadAvgMs >= 0)
         assertTrue(report.reloadSuccessRate >= 0.0)
         assertTrue(report.eventThroughputPerSec >= 0.0)
         assertTrue(report.agentSuccessRate >= 0.0)
+        assertEquals(3, report.soakSamples)
 
         val latest = service.latest()
         assertNotNull(latest)
         assertEquals("welcome", latest.moduleId)
         assertEquals(0.7, latest.agentSuccessRate)
+        assertEquals(BenchScenario.SOAK, latest.scenario)
     }
 }

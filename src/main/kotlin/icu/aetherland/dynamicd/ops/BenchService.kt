@@ -6,9 +6,16 @@ import icu.aetherland.dynamicd.module.ModuleManager
 import java.io.File
 import kotlin.math.max
 
+enum class BenchScenario {
+    STANDARD,
+    MIXED,
+    SOAK,
+}
+
 data class BenchReport(
     val moduleId: String,
     val iterations: Int,
+    val scenario: BenchScenario,
     val compileColdMs: Long,
     val compileWarmAvgMs: Long,
     val reloadAvgMs: Long,
@@ -16,6 +23,7 @@ data class BenchReport(
     val reloadSuccessRate: Double,
     val eventThroughputPerSec: Double,
     val agentSuccessRate: Double,
+    val soakSamples: Int,
 )
 
 class BenchService(
@@ -27,7 +35,7 @@ class BenchService(
         storageFile.parentFile?.mkdirs()
     }
 
-    fun run(moduleId: String, iterations: Int): BenchReport {
+    fun run(moduleId: String, iterations: Int, scenario: BenchScenario = BenchScenario.STANDARD): BenchReport {
         val safeIterations = max(1, iterations)
         val perms = AgentToolchain.SYSTEM_PERMISSIONS
 
@@ -41,6 +49,7 @@ class BenchService(
         var reuseNumerator = 0
         var reuseDenominator = 0
         var eventCountTotal = 0
+        var soakSamples = 0
 
         repeat(safeIterations) {
             val compileStart = System.nanoTime()
@@ -49,11 +58,17 @@ class BenchService(
             reuseNumerator += compile.metrics.filesReused
             reuseDenominator += compile.metrics.filesCompiled + compile.metrics.filesReused
             eventCountTotal += compile.registry.events.size
+            if (scenario == BenchScenario.MIXED) {
+                eventCountTotal += compile.registry.commands.size + compile.registry.timers.size
+            }
 
             val reloadStart = System.nanoTime()
             val ok = moduleManager.reloadModule(moduleId, "bench", perms)
             if (ok) reloadSuccess++
             reloadTotal += elapsedMs(reloadStart)
+            if (scenario == BenchScenario.SOAK) {
+                soakSamples++
+            }
         }
         val stats = agentStatsProvider()
         val throughput = if (reloadTotal <= 0) 0.0 else eventCountTotal.toDouble() / (reloadTotal.toDouble() / 1000.0)
@@ -61,6 +76,7 @@ class BenchService(
         val report = BenchReport(
             moduleId = moduleId,
             iterations = safeIterations,
+            scenario = scenario,
             compileColdMs = compileColdMs,
             compileWarmAvgMs = warmCompileTotal / safeIterations,
             reloadAvgMs = reloadTotal / safeIterations,
@@ -68,6 +84,7 @@ class BenchService(
             reloadSuccessRate = reloadSuccess.toDouble() / safeIterations.toDouble(),
             eventThroughputPerSec = throughput,
             agentSuccessRate = stats.successRate,
+            soakSamples = soakSamples,
         )
         write(report)
         return report
@@ -83,6 +100,9 @@ class BenchService(
             .toMap()
         val moduleId = values["moduleId"] ?: return null
         val iterations = values["iterations"]?.toIntOrNull() ?: return null
+        val scenario = values["scenario"]?.let {
+            runCatching { BenchScenario.valueOf(it) }.getOrNull()
+        } ?: return null
         val compileColdMs = values["compileColdMs"]?.toLongOrNull() ?: return null
         val compileWarmAvgMs = values["compileWarmAvgMs"]?.toLongOrNull() ?: return null
         val reloadAvgMs = values["reloadAvgMs"]?.toLongOrNull() ?: return null
@@ -90,9 +110,11 @@ class BenchService(
         val reloadSuccessRate = values["reloadSuccessRate"]?.toDoubleOrNull() ?: return null
         val eventThroughputPerSec = values["eventThroughputPerSec"]?.toDoubleOrNull() ?: return null
         val agentSuccessRate = values["agentSuccessRate"]?.toDoubleOrNull() ?: return null
+        val soakSamples = values["soakSamples"]?.toIntOrNull() ?: return null
         return BenchReport(
             moduleId,
             iterations,
+            scenario,
             compileColdMs,
             compileWarmAvgMs,
             reloadAvgMs,
@@ -100,6 +122,7 @@ class BenchService(
             reloadSuccessRate,
             eventThroughputPerSec,
             agentSuccessRate,
+            soakSamples,
         )
     }
 
@@ -108,6 +131,7 @@ class BenchService(
             """
             moduleId=${report.moduleId}
             iterations=${report.iterations}
+            scenario=${report.scenario.name}
             compileColdMs=${report.compileColdMs}
             compileWarmAvgMs=${report.compileWarmAvgMs}
             reloadAvgMs=${report.reloadAvgMs}
@@ -115,6 +139,7 @@ class BenchService(
             reloadSuccessRate=${report.reloadSuccessRate}
             eventThroughputPerSec=${report.eventThroughputPerSec}
             agentSuccessRate=${report.agentSuccessRate}
+            soakSamples=${report.soakSamples}
             """.trimIndent() + "\n",
         )
     }

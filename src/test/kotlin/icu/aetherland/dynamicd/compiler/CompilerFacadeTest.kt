@@ -159,6 +159,26 @@ class CompilerFacadeTest {
     }
 
     @Test
+    fun `fails when impl method signature mismatches trait`() {
+        val dir = Files.createTempDirectory("dynamicd-mod").toFile()
+        File(dir, "mod.yuz").writeText(
+            """
+            module "dynamicd:welcome"
+            record Reward { id: String }
+            trait Formatter {
+                fn format(v: String) -> String
+            }
+            impl Formatter for Reward {
+                fn format() -> Int { }
+            }
+            """.trimIndent(),
+        )
+        val result = CompilerFacade.compileModule("welcome", dir)
+        assertFalse(result.success)
+        assertTrue(result.diagnostics.any { it.code == "E0609" })
+    }
+
+    @Test
     fun `fails question mark outside result context`() {
         val dir = Files.createTempDirectory("dynamicd-mod").toFile()
         File(dir, "mod.yuz").writeText(
@@ -172,6 +192,22 @@ class CompilerFacadeTest {
         val result = CompilerFacade.compileModule("welcome", dir)
         assertFalse(result.success)
         assertTrue(result.diagnostics.any { it.code == "E0701" })
+    }
+
+    @Test
+    fun `fails ok err return outside result function`() {
+        val dir = Files.createTempDirectory("dynamicd-mod").toFile()
+        File(dir, "mod.yuz").writeText(
+            """
+            module "dynamicd:welcome"
+            fn test() {
+              return ok(1)
+            }
+            """.trimIndent(),
+        )
+        val result = CompilerFacade.compileModule("welcome", dir)
+        assertFalse(result.success)
+        assertTrue(result.diagnostics.any { it.code == "E0702" })
     }
 
     @Test
@@ -208,5 +244,21 @@ class CompilerFacadeTest {
         val result = CompilerFacade.compileModule("welcome", dir)
         assertFalse(result.success)
         assertTrue(result.diagnostics.any { it.code == "E0608" })
+    }
+
+    @Test
+    fun `result match requires both ok and err without else`() {
+        val dir = Files.createTempDirectory("dynamicd-mod").toFile()
+        File(dir, "mod.yuz").writeText(
+            """
+            module "dynamicd:welcome"
+            match queryResult {
+              case ok(value) => tell player "ok"
+            }
+            """.trimIndent(),
+        )
+        val result = CompilerFacade.compileModule("welcome", dir)
+        assertFalse(result.success)
+        assertTrue(result.diagnostics.any { it.code == "E0703" })
     }
 }

@@ -143,7 +143,10 @@ object SemanticAnalyzer {
             val traitMethods = traitMap[decl.traitName]?.methods.orEmpty().toSet()
             if (traitMethods.isNotEmpty()) {
                 val implMethods = decl.methods.toSet()
-                val missing = (traitMethods - implMethods).sorted()
+                val missing = traitMethods
+                    .filter { required -> implMethods.none { actual -> actual.name == required.name } }
+                    .map { it.name }
+                    .sorted()
                 if (missing.isNotEmpty()) {
                     diagnostics += Diagnostic(
                         code = "E0605",
@@ -158,7 +161,10 @@ object SemanticAnalyzer {
                         suggestion = "Implement missing trait methods in impl block",
                     )
                 }
-                val extra = (implMethods - traitMethods).sorted()
+                val extra = implMethods
+                    .filter { actual -> traitMethods.none { required -> required.name == actual.name } }
+                    .map { it.name }
+                    .sorted()
                 if (extra.isNotEmpty()) {
                     diagnostics += Diagnostic(
                         code = "W0606",
@@ -169,6 +175,27 @@ object SemanticAnalyzer {
                         line = 1,
                         column = 1,
                         suggestion = "Remove extra methods or update trait definition",
+                    )
+                }
+                val mismatched = mutableListOf<String>()
+                traitMethods.forEach { required ->
+                    val actual = implMethods.firstOrNull { it.name == required.name } ?: return@forEach
+                    val sameReturn = actual.returnType == required.returnType
+                    val sameArity = actual.paramCount == required.paramCount
+                    if (!sameReturn || !sameArity) {
+                        mismatched += required.name
+                    }
+                }
+                if (mismatched.isNotEmpty()) {
+                    diagnostics += Diagnostic(
+                        code = "E0609",
+                        level = DiagnosticLevel.ERROR,
+                        stage = DiagnosticStage.TYPE,
+                        message = "Impl method signature mismatch: ${mismatched.joinToString(",")}",
+                        file = file.name,
+                        line = 1,
+                        column = 1,
+                        suggestion = "Align impl method parameters/return types with trait definition",
                     )
                 }
             }
@@ -225,6 +252,24 @@ object SemanticAnalyzer {
                     suggestion = "Add else branch for safer exhaustive behavior",
                 )
             }
+
+            val resultCaseSet = decl.caseLabels.map { it.substringBefore("(") }.toSet()
+            if (!decl.hasElseBranch && ("ok" in resultCaseSet || "err" in resultCaseSet)) {
+                if (!resultCaseSet.containsAll(setOf("ok", "err"))) {
+                    diagnostics += Diagnostic(
+                        code = "E0703",
+                        level = DiagnosticLevel.ERROR,
+                        stage = DiagnosticStage.TYPE,
+                        message = "Result match must cover both ok and err branches or include else",
+                        file = file.name,
+                        line = 1,
+                        column = 1,
+                        expected = "ok + err",
+                        actual = resultCaseSet.joinToString(","),
+                        suggestion = "Add missing branch or else",
+                    )
+                }
+            }
         }
         return diagnostics
     }
@@ -258,6 +303,21 @@ object SemanticAnalyzer {
                     expected = "fn ... -> Result<T,E>",
                     actual = "non-Result context",
                     suggestion = "Change function return type to Result<T,E> or handle result explicitly",
+                    contextSnippet = raw,
+                )
+            }
+            if (Regex("\\breturn\\s+(ok|err)\\s*\\(").containsMatchIn(line) && !inResultFn) {
+                diagnostics += Diagnostic(
+                    code = "E0702",
+                    level = DiagnosticLevel.ERROR,
+                    stage = DiagnosticStage.TYPE,
+                    message = "ok/err return requires Result-returning function context",
+                    file = file.name,
+                    line = idx + 1,
+                    column = 1,
+                    expected = "fn ... -> Result<T,E>",
+                    actual = "non-Result context",
+                    suggestion = "Change function return type to Result<T,E> or return plain value",
                     contextSnippet = raw,
                 )
             }

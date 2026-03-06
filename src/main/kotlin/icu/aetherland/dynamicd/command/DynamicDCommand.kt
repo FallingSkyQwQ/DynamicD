@@ -6,6 +6,7 @@ import icu.aetherland.dynamicd.integration.LuckPermsBridge
 import icu.aetherland.dynamicd.integration.PlaceholderRegistrar
 import icu.aetherland.dynamicd.integration.spi.ExtensionSnapshot
 import icu.aetherland.dynamicd.module.ModuleManager
+import icu.aetherland.dynamicd.ops.BenchScenario
 import icu.aetherland.dynamicd.ops.BenchService
 import icu.aetherland.dynamicd.repl.ReplEvaluator
 import icu.aetherland.dynamicd.repl.ReplSessionManager
@@ -338,17 +339,18 @@ class DynamicDCommand(
         return when (args[0].lowercase()) {
             "run" -> {
                 if (args.size < 2) {
-                    sender.sendMessage("Usage: /dd bench run <moduleId> [iterations]")
+                    sender.sendMessage("Usage: /dd bench run <moduleId> [iterations] [standard|mixed|soak]")
                     return true
                 }
                 val moduleId = args[1]
                 val iterations = args.getOrNull(2)?.toIntOrNull() ?: 8
-                val report = benchService.run(moduleId, iterations)
+                val scenario = args.getOrNull(3)?.let { parseScenario(it) } ?: BenchScenario.STANDARD
+                val report = benchService.run(moduleId, iterations, scenario)
                 sender.sendMessage(
-                    "bench module=${report.moduleId} cold=${report.compileColdMs}ms warmAvg=${report.compileWarmAvgMs}ms " +
+                    "bench module=${report.moduleId} scenario=${report.scenario} cold=${report.compileColdMs}ms warmAvg=${report.compileWarmAvgMs}ms " +
                         "reloadAvg=${report.reloadAvgMs}ms reuse=${"%.2f".format(report.incrementalReuseRatio)} " +
                         "reloadOk=${"%.2f".format(report.reloadSuccessRate)} events/s=${"%.2f".format(report.eventThroughputPerSec)} " +
-                        "agentOk=${"%.2f".format(report.agentSuccessRate)}",
+                        "agentOk=${"%.2f".format(report.agentSuccessRate)} soakSamples=${report.soakSamples}",
                 )
                 true
             }
@@ -359,11 +361,11 @@ class DynamicDCommand(
                     return true
                 }
                 sender.sendMessage(
-                    "bench latest module=${report.moduleId} iterations=${report.iterations} " +
+                    "bench latest module=${report.moduleId} scenario=${report.scenario} iterations=${report.iterations} " +
                     "cold=${report.compileColdMs}ms warmAvg=${report.compileWarmAvgMs}ms " +
                         "reloadAvg=${report.reloadAvgMs}ms reuse=${"%.2f".format(report.incrementalReuseRatio)} " +
                         "reloadOk=${"%.2f".format(report.reloadSuccessRate)} events/s=${"%.2f".format(report.eventThroughputPerSec)} " +
-                        "agentOk=${"%.2f".format(report.agentSuccessRate)}",
+                        "agentOk=${"%.2f".format(report.agentSuccessRate)} soakSamples=${report.soakSamples}",
                 )
                 true
             }
@@ -458,11 +460,24 @@ class DynamicDCommand(
         if (args.size == 2 && args[0].equals("bench", ignoreCase = true)) {
             return mutableListOf("run", "report").filter { it.startsWith(args[1], ignoreCase = true) }.toMutableList()
         }
+        if (args.size == 5 && args[0].equals("bench", ignoreCase = true) && args[1].equals("run", ignoreCase = true)) {
+            return mutableListOf("standard", "mixed", "soak")
+                .filter { it.startsWith(args[4], ignoreCase = true) }
+                .toMutableList()
+        }
         return mutableListOf()
     }
 
     private fun isSensitiveReplInput(input: String): Boolean {
         val lowered = input.lowercase()
         return lowered.contains("run ") || lowered.contains("rollback") || lowered.contains("grant")
+    }
+
+    private fun parseScenario(value: String): BenchScenario {
+        return when (value.lowercase()) {
+            "mixed" -> BenchScenario.MIXED
+            "soak" -> BenchScenario.SOAK
+            else -> BenchScenario.STANDARD
+        }
     }
 }
