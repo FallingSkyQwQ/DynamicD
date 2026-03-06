@@ -1,8 +1,8 @@
 package icu.aetherland.dynamicd.module
 
 import icu.aetherland.dynamicd.compiler.CompileResult
-import org.bukkit.event.Listener
-import org.bukkit.scheduler.BukkitTask
+import icu.aetherland.dynamicd.runtime.ListenerHandle
+import icu.aetherland.dynamicd.runtime.TaskHandle
 import java.io.File
 
 data class ModuleDescriptor(
@@ -10,6 +10,8 @@ data class ModuleDescriptor(
     val directory: File,
     var state: ModuleState = ModuleState.PREPARED,
     var lastCompileResult: CompileResult? = null,
-    val listeners: MutableList<Listener> = mutableListOf(),
-    val tasks: MutableList<BukkitTask> = mutableListOf(),
+    var lastRuntimeError: String? = null,
+    val listeners: MutableList<ListenerHandle> = mutableListOf(),
+    val tasks: MutableList<TaskHandle> = mutableListOf(),
+    val activeCommands: MutableSet<String> = mutableSetOf(),
 )

@@ -7,11 +7,13 @@ website: https://example.invalid
 commands:
   dd:
     description: DynamicD control command
-    usage: /dd <modules|snapshot>
+    usage: /dd <modules|snapshot|agent>
     permission: dynamicd.ops
 permissions:
   dynamicd.ops:
     default: op
+  dynamicd.ops.confirm.bypass:
+    default: false
   dynamicd.agent.use:
     default: op
   dynamicd.agent.patch:

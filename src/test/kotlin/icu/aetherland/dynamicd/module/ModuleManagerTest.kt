@@ -1,0 +1,168 @@
+package icu.aetherland.dynamicd.module
+
+import icu.aetherland.dynamicd.agent.AgentToolchain
+import icu.aetherland.dynamicd.audit.AuditLogger
+import icu.aetherland.dynamicd.ops.SnapshotManager
+import icu.aetherland.dynamicd.runtime.ListenerHandle
+import icu.aetherland.dynamicd.runtime.RuntimeBridge
+import icu.aetherland.dynamicd.runtime.TaskHandle
+import java.io.File
+import java.nio.file.Files
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+
+class ModuleManagerTest {
+    @Test
+    fun `denies compile without permission and returns E0900`() {
+        val env = testEnv("m1" to """module "dynamicd:m1"""")
+        val result = env.manager.compileModule("m1", "tester", emptySet())
+        assertFalse(result.success)
+        assertTrue(result.diagnostics.any { it.code == "E0900" })
+    }
+
+    @Test
+    fun `reload keeps single binding and unload cancels timers`() {
+        val env = testEnv(
+            "m1" to """
+            module "dynamicd:m1"
+            on player join { }
+            every 1s { }
+            command "/demo" permission "dynamicd.demo" { }
+            """.trimIndent(),
+        )
+        val perms = AgentToolchain.SYSTEM_PERMISSIONS
+        assertTrue(env.manager.compileModule("m1", "tester", perms).success)
+        assertTrue(env.manager.loadModule("m1", "tester", perms))
+        assertEquals(1, env.runtime.eventBindings("m1"))
+        assertEquals(1, env.runtime.timerBindings("m1"))
+
+        assertTrue(env.manager.reloadModule("m1", "tester", perms))
+        assertEquals(1, env.runtime.eventBindings("m1"))
+        assertEquals(1, env.runtime.timerBindings("m1"))
+
+        assertTrue(env.manager.unloadModule("m1", "tester"))
+        assertEquals(0, env.runtime.eventBindings("m1"))
+        assertEquals(0, env.runtime.timerBindings("m1"))
+    }
+
+    @Test
+    fun `isolates module runtime fault`() {
+        val env = testEnv("faulty" to """module "dynamicd:faulty"""")
+        val ok = env.manager.runModuleSafely("faulty") {
+            error("boom")
+        }
+        assertFalse(ok)
+        assertNotNull(env.manager.moduleLastRuntimeError("faulty"))
+    }
+
+    @Test
+    fun `snapshot rollback restores enabled modules only`() {
+        val env = testEnv(
+            "a" to """module "dynamicd:a" on player join { }""",
+            "b" to """module "dynamicd:b" on player join { }""",
+        )
+        val perms = AgentToolchain.SYSTEM_PERMISSIONS
+        env.manager.compileModule("a", "tester", perms)
+        env.manager.loadModule("a", "tester", perms)
+        env.manager.compileModule("b", "tester", perms)
+        // b intentionally remains disabled
+
+        val snapshotId = env.manager.createSnapshot("tester", perms)
+        assertNotNull(snapshotId)
+        assertTrue(env.manager.listSnapshots().contains(snapshotId))
+
+        env.manager.loadModule("b", "tester", perms)
+        assertEquals(ModuleState.ENABLED, env.manager.moduleState("b"))
+        assertTrue(env.manager.rollback(snapshotId, "tester", perms))
+        assertEquals(ModuleState.ENABLED, env.manager.moduleState("a"))
+        assertEquals(ModuleState.DISABLED, env.manager.moduleState("b"))
+    }
+
+    @Test
+    fun `agent patch decision recorded with fallback strategy`() {
+        val env = testEnv("m1" to """module "dynamicd:m1"""")
+        val ok = env.manager.applyAgentPatch(
+            moduleId = "m1",
+            operator = "tester",
+            grantedPermissions = AgentToolchain.SYSTEM_PERMISSIONS,
+            astAvailable = false,
+            tokenAvailable = false,
+        )
+        assertTrue(ok)
+        val auditText = env.auditFile.readText()
+        assertTrue(auditText.contains("action=patch"))
+        assertTrue(auditText.contains("strategy=TEXT"))
+    }
+
+    private fun testEnv(vararg modules: Pair<String, String>): Env {
+        val root = Files.createTempDirectory("dynamicd-mm").toFile()
+        val modulesRoot = File(root, "modules").apply { mkdirs() }
+        modules.forEach { (id, source) ->
+            val dir = File(modulesRoot, id).apply { mkdirs() }
+            File(dir, "mod.yuz").writeText(source)
+        }
+        val auditFile = File(root, "logs/audit.log")
+        val runtime = FakeRuntimeBridge()
+        val manager = ModuleManager(
+            modulesRoot = modulesRoot,
+            runtimeBridge = runtime,
+            snapshotManager = SnapshotManager(File(root, "snapshots")),
+            agentToolchain = AgentToolchain(AuditLogger(auditFile)),
+            logger = {},
+        )
+        manager.discoverModules()
+        return Env(manager, runtime, auditFile)
+    }
+
+    private data class Env(
+        val manager: ModuleManager,
+        val runtime: FakeRuntimeBridge,
+        val auditFile: File,
+    )
+}
+
+private class FakeRuntimeBridge : RuntimeBridge {
+    private val eventHandles = mutableMapOf<String, MutableList<FakeListenerHandle>>()
+    private val taskHandles = mutableMapOf<String, MutableList<FakeTaskHandle>>()
+
+    override fun bindEvent(moduleId: String, eventPath: String): ListenerHandle {
+        val handle = FakeListenerHandle { eventHandles[moduleId]?.removeIf { it.cancelled } }
+        eventHandles.getOrPut(moduleId) { mutableListOf() }.add(handle)
+        return handle
+    }
+
+    override fun bindTimer(moduleId: String, timerSpec: String): TaskHandle {
+        val handle = FakeTaskHandle { taskHandles[moduleId]?.removeIf { it.cancelled } }
+        taskHandles.getOrPut(moduleId) { mutableListOf() }.add(handle)
+        return handle
+    }
+
+    fun eventBindings(moduleId: String): Int = eventHandles[moduleId]?.count { !it.cancelled } ?: 0
+
+    fun timerBindings(moduleId: String): Int = taskHandles[moduleId]?.count { !it.cancelled } ?: 0
+
+    private class FakeListenerHandle(
+        private val onCancel: () -> Unit,
+    ) : ListenerHandle {
+        var cancelled: Boolean = false
+
+        override fun unregister() {
+            cancelled = true
+            onCancel()
+        }
+    }
+
+    private class FakeTaskHandle(
+        private val onCancel: () -> Unit,
+    ) : TaskHandle {
+        var cancelled: Boolean = false
+
+        override fun cancel() {
+            cancelled = true
+            onCancel()
+        }
+    }
+}

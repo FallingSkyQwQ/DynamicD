@@ -1,6 +1,7 @@
 package icu.aetherland.dynamicd.compiler
 
 import java.io.File
+import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -9,7 +10,7 @@ import kotlin.test.assertTrue
 class CompilerFacadeTest {
     @Test
     fun `extracts event command and permission registry`() {
-        val dir = createTempDir(prefix = "dynamicd-mod")
+        val dir = Files.createTempDirectory("dynamicd-mod").toFile()
         val file = File(dir, "mod.yuz")
         file.writeText(
             """
@@ -34,7 +35,7 @@ class CompilerFacadeTest {
 
     @Test
     fun `fails nullable player access without guard`() {
-        val dir = createTempDir(prefix = "dynamicd-mod")
+        val dir = Files.createTempDirectory("dynamicd-mod").toFile()
         val file = File(dir, "mod.yuz")
         file.writeText(
             """
@@ -53,7 +54,7 @@ class CompilerFacadeTest {
 
     @Test
     fun `fails sync api in async block`() {
-        val dir = createTempDir(prefix = "dynamicd-mod")
+        val dir = Files.createTempDirectory("dynamicd-mod").toFile()
         val file = File(dir, "mod.yuz")
         file.writeText(
             """

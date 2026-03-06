@@ -11,7 +11,36 @@ enum class AgentToolAction {
     ROLLBACK,
 }
 
+data class AuthorizationResult(val allowed: Boolean, val missingPermission: String? = null)
+
 class AgentToolchain(private val auditLogger: AuditLogger) {
+    companion object {
+        val SYSTEM_PERMISSIONS = setOf(
+            "dynamicd.agent.use",
+            "dynamicd.agent.patch",
+            "dynamicd.agent.compile",
+            "dynamicd.agent.load",
+            "dynamicd.agent.rollback",
+        )
+    }
+
+    fun authorize(action: AgentToolAction, grantedPermissions: Set<String>): AuthorizationResult {
+        val required = when (action) {
+            AgentToolAction.READ,
+            AgentToolAction.SEARCH,
+            -> "dynamicd.agent.use"
+            AgentToolAction.PATCH -> "dynamicd.agent.patch"
+            AgentToolAction.COMPILE -> "dynamicd.agent.compile"
+            AgentToolAction.LOAD -> "dynamicd.agent.load"
+            AgentToolAction.ROLLBACK -> "dynamicd.agent.rollback"
+        }
+        return if (required in grantedPermissions) {
+            AuthorizationResult(true)
+        } else {
+            AuthorizationResult(false, required)
+        }
+    }
+
     fun recordAction(
         operator: String,
         action: AgentToolAction,
@@ -25,6 +54,27 @@ class AgentToolchain(private val auditLogger: AuditLogger) {
             target = target,
             decision = decision,
             snapshotId = snapshotId,
+        )
+    }
+
+    fun recordPatchDecision(
+        operator: String,
+        target: String,
+        decision: PatchDecision,
+    ) {
+        val message = buildString {
+            append("strategy=")
+            append(decision.actual.name)
+            if (decision.downgradeReason != null) {
+                append(" downgradeReason=")
+                append(decision.downgradeReason)
+            }
+        }
+        auditLogger.record(
+            operator = operator,
+            action = AgentToolAction.PATCH.name.lowercase(),
+            target = target,
+            decision = message,
         )
     }
 
