@@ -28,7 +28,7 @@ class DynamicDCommand(
 ) : CommandExecutor, TabCompleter {
     override fun onCommand(sender: CommandSender, command: Command, label: String, args: Array<out String>): Boolean {
         if (args.isEmpty()) {
-            sender.sendMessage("/dd modules <list|load|unload|reload|compile|diag>")
+            sender.sendMessage("/dd modules <list|load|unload|reload|compile|diag|graph>")
             sender.sendMessage("/dd snapshot <list|create|rollback>")
             sender.sendMessage("/dd agent <prompt...>")
             sender.sendMessage("/dd repl <open|exec|close>")
@@ -63,7 +63,7 @@ class DynamicDCommand(
         args: List<String>,
     ): Boolean {
         if (args.isEmpty()) {
-            sender.sendMessage("Usage: /dd modules <list|load|unload|reload|compile|diag>")
+            sender.sendMessage("Usage: /dd modules <list|load|unload|reload|compile|diag|graph>")
             return true
         }
         return when (args[0].lowercase()) {
@@ -85,7 +85,9 @@ class DynamicDCommand(
                 val result = moduleManager.compileModule(moduleId, operator, permissions)
                 sender.sendMessage(
                     "compile $moduleId => ${result.success} mode=${result.metrics.mode} " +
-                        "compiled=${result.metrics.filesCompiled} reused=${result.metrics.filesReused} ms=${result.metrics.totalMillis}",
+                        "compiled=${result.metrics.filesCompiled} reused=${result.metrics.filesReused} " +
+                        "predicates=${result.metrics.compiledPredicates} throttles=${result.metrics.throttledEvents} " +
+                        "ms=${result.metrics.totalMillis}",
                 )
                 result.diagnostics.forEach {
                     sender.sendMessage("[${it.code}] ${it.message} (${it.file}:${it.line}:${it.column})")
@@ -99,6 +101,19 @@ class DynamicDCommand(
                 if (result.diagnostics.isEmpty()) {
                     sender.sendMessage("No diagnostics")
                 }
+            }
+            "graph" -> {
+                val graph = moduleManager.moduleDependencyGraph()
+                val order = moduleManager.moduleLoadOrder()
+                sender.sendMessage("LoadOrder: ${order.joinToString(" -> ")}")
+                if (graph.isEmpty()) {
+                    sender.sendMessage("No modules")
+                    return true
+                }
+                graph.forEach { (module, deps) ->
+                    sender.sendMessage("graph $module -> ${if (deps.isEmpty()) "[]" else deps.joinToString(",")}")
+                }
+                true
             }
             else -> {
                 sender.sendMessage("Unknown modules action")
@@ -366,7 +381,7 @@ class DynamicDCommand(
                 .toMutableList()
         }
         if (args.size == 2 && args[0].equals("modules", ignoreCase = true)) {
-            return mutableListOf("list", "load", "unload", "reload", "compile", "diag")
+            return mutableListOf("list", "load", "unload", "reload", "compile", "diag", "graph")
                 .filter { it.startsWith(args[1], ignoreCase = true) }
                 .toMutableList()
         }

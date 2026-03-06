@@ -4,6 +4,7 @@ import java.io.File
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertFalse
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class AstPatchEngineTest {
@@ -32,5 +33,19 @@ class AstPatchEngineTest {
         val result = engine.apply(file, PatchRequest("delete module dynamicd:test"))
         assertFalse(result.success)
         assertTrue(result.conflictReason?.contains("blocked") == true)
+    }
+
+    @Test
+    fun `ast patch upsert use is idempotent`() {
+        val root = Files.createTempDirectory("dynamicd-ast-patch-upsert").toFile()
+        val file = File(root, "mod.yuz")
+        file.writeText("module \"dynamicd:test\"\n")
+        val engine = AstPatchEngine()
+
+        assertTrue(engine.apply(file, PatchRequest("upsert use dynamicd:core")).success)
+        assertTrue(engine.apply(file, PatchRequest("upsert use dynamicd:core")).success)
+
+        val lines = file.readLines().filter { it.trim() == "use dynamicd:core" }
+        assertEquals(1, lines.size)
     }
 }

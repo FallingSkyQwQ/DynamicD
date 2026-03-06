@@ -10,6 +10,8 @@ data class CompileMetrics(
     val totalMillis: Long,
     val filesCompiled: Int,
     val filesReused: Int,
+    val compiledPredicates: Int = 0,
+    val throttledEvents: Int = 0,
 )
 
 data class CompileRegistry(
@@ -19,6 +21,7 @@ data class CompileRegistry(
     val timers: List<String>,
     val placeholders: List<String>,
     val requiredIntegrations: Set<String>,
+    val dependencyImports: List<String> = emptyList(),
 )
 
 data class SymbolIndex(
@@ -26,6 +29,7 @@ data class SymbolIndex(
     val exportedFunctions: List<String>,
     val events: List<String>,
     val commands: List<String>,
+    val dependencies: List<String> = emptyList(),
 )
 
 data class CompileResult(

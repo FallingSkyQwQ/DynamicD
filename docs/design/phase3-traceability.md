@@ -7,6 +7,7 @@
 ## Mapping
 - `DD-YUZ-004 -> AT-YUZ-004`
   - Implementation: incremental compiler cache + compile mode (`FULL/INCREMENTAL`) + file-level reuse metrics.
+  - Enhancement: event `where` predicate pre-compile计数与 `throttle` 事件统计（热路径观测）。
   - Tests: `IncrementalCompilerTest`.
 - `DD-YUZ-006 -> AT-YUZ-006`
   - Implementation: diagnostics stage/context fields (`DiagnosticStage`, `contextSnippet`) and structured diagnose API.
@@ -31,6 +32,14 @@
 - `DD-OPS-004 -> AT-OPS-004`
   - Implementation: `StructuredLogger` channels (`compile/runtime/agent/repl`) and searchable log fields.
   - Verification: runtime logs + command outputs.
+
+## Phase3+ Maturity Items (from DD.txt)
+- 模块依赖图可视化
+  - Implementation: `ModuleManager.moduleDependencyGraph/moduleLoadOrder` + `/dd modules graph`.
+  - Tests: `ModuleManagerTest.dependency graph and load order are built from use dynamicd imports`.
+- AST Patch 稳定化
+  - Implementation: `AstPatchEngine` supports idempotent `upsert use`, guarded replace, duplicate-safe append.
+  - Tests: `AstPatchEngineTest.ast patch upsert use is idempotent`.
 
 ## Alignment Notes
 - Phase 1/2 traceability remains valid; Phase 3 introduced stricter diagnostics, incremental compile paths, and stronger patch/rollback safety without removing earlier required behaviors.

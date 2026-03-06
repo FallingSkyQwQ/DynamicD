@@ -115,7 +115,7 @@ class DynamicDPlugin : JavaPlugin() {
 
         if (dynamicDConfig.runtime.autoLoadModules) {
             val enabledBeforeRestart = moduleStateStore.loadEnabledModules()
-            moduleManager.restoreModules(enabledBeforeRestart)
+            moduleManager.restoreModules(enabledBeforeRestart, dynamicDConfig.runtime.compileOnStartup)
         }
 
         val provider = OpenAiCompatibleProvider(

@@ -128,6 +128,39 @@ class ModuleManagerTest {
         assertTrue(allowed.allowed)
     }
 
+    @Test
+    fun `dependency graph and load order are built from use dynamicd imports`() {
+        val env = testEnv(
+            "core" to """module "dynamicd:core"""",
+            "welcome" to """
+            module "dynamicd:welcome"
+            use dynamicd:core
+            """.trimIndent(),
+        )
+        val graph = env.manager.moduleDependencyGraph()
+        assertEquals(emptyList(), graph["core"])
+        assertEquals(listOf("core"), graph["welcome"])
+        assertEquals(listOf("core", "welcome"), env.manager.moduleLoadOrder())
+    }
+
+    @Test
+    fun `load denied when dependency not enabled`() {
+        val env = testEnv(
+            "core" to """module "dynamicd:core"""",
+            "welcome" to """
+            module "dynamicd:welcome"
+            use dynamicd:core
+            on player join { }
+            """.trimIndent(),
+        )
+        val perms = AgentToolchain.SYSTEM_PERMISSIONS
+        assertTrue(env.manager.compileModule("welcome", "tester", perms).success)
+        assertFalse(env.manager.loadModule("welcome", "tester", perms))
+        assertTrue(env.manager.compileModule("core", "tester", perms).success)
+        assertTrue(env.manager.loadModule("core", "tester", perms))
+        assertTrue(env.manager.loadModule("welcome", "tester", perms))
+    }
+
     private fun testEnv(vararg modules: Pair<String, String>): Env {
         val root = Files.createTempDirectory("dynamicd-mm").toFile()
         val modulesRoot = File(root, "modules").apply { mkdirs() }

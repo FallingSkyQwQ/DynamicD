@@ -60,8 +60,29 @@ class ModuleManager(
             .orEmpty()
     }
 
-    fun restoreModules(enabledModuleIds: Set<String>) {
+    fun restoreModules(enabledModuleIds: Set<String>, compileOnStartup: Boolean = true) {
         val targets = discoverModules().filter { enabledModuleIds.isEmpty() || it.id in enabledModuleIds }
+        if (compileOnStartup) {
+            val compiled = targets.associateWith { descriptor ->
+                try {
+                    compileModule(descriptor.id, "system", AgentToolchain.SYSTEM_PERMISSIONS)
+                } catch (ex: Exception) {
+                    descriptor.state = ModuleState.DISABLED
+                    descriptor.lastRuntimeError = ex.message
+                    logger("module=${descriptor.id} restore=failed reason=${ex.message}")
+                    null
+                }
+            }
+            targets.forEach { descriptor ->
+                val result = compiled[descriptor]
+                if (result?.success == true) {
+                    loadModule(descriptor.id, "system", AgentToolchain.SYSTEM_PERMISSIONS)
+                } else {
+                    logger("module=${descriptor.id} restore=skipped reason=compile_error")
+                }
+            }
+            return
+        }
         targets.forEach { descriptor ->
             try {
                 val result = compileModule(descriptor.id, "system", AgentToolchain.SYSTEM_PERMISSIONS)
@@ -228,6 +249,37 @@ class ModuleManager(
 
     fun integrationDiagnostics() = integrationRegistry.diagnostics()
 
+    fun moduleDependencyGraph(): Map<String, List<String>> {
+        val known = discoverModules().map { it.id }.toSet()
+        return discoverModules()
+            .associate { descriptor ->
+                val deps = discoverDependencies(descriptor.directory)
+                    .filter { it in known && it != descriptor.id }
+                descriptor.id to deps.sorted()
+            }
+            .toSortedMap()
+    }
+
+    fun moduleLoadOrder(): List<String> {
+        val graph = moduleDependencyGraph()
+        val remainingDeps = graph.mapValues { it.value.toMutableSet() }.toMutableMap()
+        val queue = ArrayDeque(remainingDeps.filterValues { it.isEmpty() }.keys.sorted())
+        val ordered = mutableListOf<String>()
+        while (queue.isNotEmpty()) {
+            val node = queue.removeFirst()
+            ordered += node
+            remainingDeps.forEach { (moduleId, deps) ->
+                if (node in deps) {
+                    deps.remove(node)
+                    if (deps.isEmpty() && moduleId !in ordered && moduleId !in queue) {
+                        queue.addLast(moduleId)
+                    }
+                }
+            }
+        }
+        return if (ordered.size == graph.size) ordered else graph.keys.sorted()
+    }
+
     fun enabledModuleIds(): Set<String> {
         return modules.values
             .filter { it.state == ModuleState.ENABLED }
@@ -300,6 +352,14 @@ class ModuleManager(
 
         val compileResult = module.lastCompileResult ?: compileModule(moduleId, operator, grantedPermissions)
         if (!compileResult.success) {
+            return false
+        }
+        val missingDependencies = compileResult.registry.dependencyImports.filter { dep ->
+            val depModule = modules[dep] ?: discoverModules().firstOrNull { it.id == dep } ?: return@filter true
+            depModule.state != ModuleState.ENABLED
+        }
+        if (missingDependencies.isNotEmpty()) {
+            logger("module=$moduleId dependency_missing=${missingDependencies.joinToString(",")}")
             return false
         }
         val integrationMissing = compileResult.registry.requiredIntegrations.filter {
@@ -548,6 +608,25 @@ class ModuleManager(
                 }
             }
         return keys.distinct()
+    }
+
+    private fun discoverDependencies(moduleDir: File): List<String> {
+        val deps = mutableListOf<String>()
+        moduleDir.walkTopDown()
+            .filter { it.isFile && it.extension == "yuz" }
+            .forEach { file ->
+                file.readLines().forEach { raw ->
+                    val line = raw.trim()
+                    val dep = Regex("use\\s+dynamicd:([a-zA-Z0-9_\\-]+)")
+                        .find(line)
+                        ?.groupValues
+                        ?.getOrNull(1)
+                    if (!dep.isNullOrBlank()) {
+                        deps += dep
+                    }
+                }
+            }
+        return deps.distinct()
     }
 
     private fun tryTokenPatch(file: File, instruction: String): Boolean {

@@ -19,10 +19,19 @@ object Parser {
                         ?.getOrNull(1)
                 }
                 line.startsWith("on ") -> {
-                    val path = line.removePrefix("on ").substringBefore(" where").substringBefore(" priority")
-                        .substringBefore(" ignoreCancelled").substringBefore("{").trim()
+                    val path = line.removePrefix("on ").substringBefore(" where").substringBefore(" throttle")
+                        .substringBefore(" priority").substringBefore(" ignoreCancelled").substringBefore("{").trim()
+                    val where = Regex("\\bwhere\\b\\s+(.+?)(\\s+throttle\\b|\\s+priority\\b|\\s+ignoreCancelled\\b|\\{|$)")
+                        .find(line)
+                        ?.groupValues
+                        ?.getOrNull(1)
+                        ?.trim()
+                    val throttle = Regex("\\bthrottle\\b\\s+([0-9]+[tsmhd])")
+                        .find(line)
+                        ?.groupValues
+                        ?.getOrNull(1)
                     if (path.isNotBlank()) {
-                        declarations.add(EventDeclaration(path))
+                        declarations.add(EventDeclaration(path, whereClause = where, throttleLiteral = throttle))
                     }
                 }
                 line.startsWith("command ") -> declarations.add(CommandDeclaration(line))

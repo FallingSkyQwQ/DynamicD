@@ -9,7 +9,11 @@ data class AstModule(
 
 sealed interface AstDeclaration : AstNode
 
-data class EventDeclaration(val eventPath: String) : AstDeclaration
+data class EventDeclaration(
+    val eventPath: String,
+    val whereClause: String? = null,
+    val throttleLiteral: String? = null,
+) : AstDeclaration
 
 data class CommandDeclaration(val raw: String) : AstDeclaration
 

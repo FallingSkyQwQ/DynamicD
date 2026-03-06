@@ -44,4 +44,24 @@ class IncrementalCompilerTest {
         assertEquals(1, incOneChange.metrics.filesCompiled)
         assertEquals(1, incOneChange.metrics.filesReused)
     }
+
+    @Test
+    fun `collects dependency imports and predicate metrics`() {
+        val root = Files.createTempDirectory("dynamicd-incr-deps").toFile()
+        File(root, "mod.yuz").writeText(
+            """
+            module "dynamicd:welcome"
+            use dynamicd:core
+            on player chat where message contains "hello" throttle 5t {
+            }
+            """.trimIndent(),
+        )
+
+        val compiled = CompilerFacade.compileModule("welcome", root, CompileMode.FULL)
+        assertTrue(compiled.success)
+        assertEquals(listOf("core"), compiled.registry.dependencyImports)
+        assertEquals(listOf("core"), compiled.symbolIndex.dependencies)
+        assertEquals(1, compiled.metrics.compiledPredicates)
+        assertEquals(1, compiled.metrics.throttledEvents)
+    }
 }

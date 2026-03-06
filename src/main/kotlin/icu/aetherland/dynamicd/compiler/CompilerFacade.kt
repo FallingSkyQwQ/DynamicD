@@ -5,6 +5,7 @@ import kotlin.system.measureTimeMillis
 
 object CompilerFacade {
     private val incrementalCache = IncrementalCompilerCache()
+    private val eventPredicateCompiler = EventPredicateCompiler()
 
     fun compileModule(
         moduleId: String,
@@ -37,6 +38,9 @@ object CompilerFacade {
         val allPlaceholders = mutableListOf<String>()
         val requiredIntegrations = mutableSetOf<String>()
         val exportedFunctions = mutableListOf<String>()
+        val dependencies = mutableListOf<String>()
+        var compiledPredicates = 0
+        var throttledEvents = 0
 
         var filesCompiled = 0
         var filesReused = 0
@@ -55,6 +59,9 @@ object CompilerFacade {
                     allPlaceholders.addAll(cached.placeholders)
                     requiredIntegrations.addAll(cached.integrations)
                     exportedFunctions.addAll(cached.exportedFunctions)
+                    dependencies.addAll(cached.dependencies)
+                    compiledPredicates += cached.compiledPredicates
+                    throttledEvents += cached.throttledEvents
                     return@forEach
                 }
 
@@ -62,13 +69,25 @@ object CompilerFacade {
                 val stageDiagnostics = runChecks(file, source)
                 diagnostics.addAll(stageDiagnostics)
                 val ast = Parser.parse(source)
-                val events = ast.declarations.filterIsInstance<EventDeclaration>().map { it.eventPath }
+                val eventDecls = ast.declarations.filterIsInstance<EventDeclaration>()
+                val events = eventDecls.map { it.eventPath }
+                eventDecls.forEach { decl ->
+                    val where = decl.whereClause
+                    if (!where.isNullOrBlank()) {
+                        eventPredicateCompiler.compile(where)
+                        compiledPredicates++
+                    }
+                    if (!decl.throttleLiteral.isNullOrBlank()) {
+                        throttledEvents++
+                    }
+                }
                 val commands = ast.declarations.filterIsInstance<CommandDeclaration>().map { it.raw }
                 val permissions = ast.declarations.filterIsInstance<PermissionDeclaration>().map { it.node }
                 val timers = ast.declarations.filterIsInstance<TimerDeclaration>().map { "${it.timerType}:${it.durationLiteral}" }
                 val placeholders = extractPlaceholders(source)
                 val integrations = extractIntegrations(source)
                 val functions = extractExportedFunctions(source)
+                val deps = extractDependencies(source)
 
                 allEvents.addAll(events)
                 allCommands.addAll(commands)
@@ -77,6 +96,7 @@ object CompilerFacade {
                 allPlaceholders.addAll(placeholders)
                 requiredIntegrations.addAll(integrations)
                 exportedFunctions.addAll(functions)
+                dependencies.addAll(deps)
 
                 incrementalCache.put(
                     moduleId,
@@ -92,6 +112,9 @@ object CompilerFacade {
                         integrations = integrations,
                         diagnostics = stageDiagnostics,
                         exportedFunctions = functions,
+                        dependencies = deps,
+                        compiledPredicates = eventDecls.count { !it.whereClause.isNullOrBlank() },
+                        throttledEvents = eventDecls.count { !it.throttleLiteral.isNullOrBlank() },
                     ),
                 )
             }
@@ -109,18 +132,22 @@ object CompilerFacade {
                 timers = allTimers.distinct(),
                 placeholders = allPlaceholders.distinct(),
                 requiredIntegrations = requiredIntegrations,
+                dependencyImports = dependencies.distinct(),
             ),
             symbolIndex = SymbolIndex(
                 moduleId = moduleId,
                 exportedFunctions = exportedFunctions.distinct(),
                 events = allEvents.distinct(),
                 commands = allCommands.distinct(),
+                dependencies = dependencies.distinct(),
             ),
             metrics = CompileMetrics(
                 mode = mode,
                 totalMillis = elapsed,
                 filesCompiled = filesCompiled,
                 filesReused = filesReused,
+                compiledPredicates = compiledPredicates,
+                throttledEvents = throttledEvents,
             ),
         )
     }
@@ -260,9 +287,17 @@ object CompilerFacade {
                 timers = emptyList(),
                 placeholders = emptyList(),
                 requiredIntegrations = emptySet(),
+                dependencyImports = emptyList(),
             ),
-            symbolIndex = SymbolIndex(moduleId, emptyList(), emptyList(), emptyList()),
-            metrics = CompileMetrics(mode = mode, totalMillis = 0, filesCompiled = 0, filesReused = 0),
+            symbolIndex = SymbolIndex(moduleId, emptyList(), emptyList(), emptyList(), emptyList()),
+            metrics = CompileMetrics(
+                mode = mode,
+                totalMillis = 0,
+                filesCompiled = 0,
+                filesReused = 0,
+                compiledPredicates = 0,
+                throttledEvents = 0,
+            ),
         )
     }
 
@@ -311,5 +346,23 @@ object CompilerFacade {
             }
         }
         return result
+    }
+
+    private fun extractDependencies(source: String): List<String> {
+        val dependencies = mutableListOf<String>()
+        source.lines().forEach { raw ->
+            val line = raw.trim()
+            if (!line.startsWith("use ")) {
+                return@forEach
+            }
+            val dep = Regex("use\\s+dynamicd:([a-zA-Z0-9_\\-]+)")
+                .find(line)
+                ?.groupValues
+                ?.getOrNull(1)
+            if (!dep.isNullOrBlank()) {
+                dependencies += dep
+            }
+        }
+        return dependencies.distinct()
     }
 }

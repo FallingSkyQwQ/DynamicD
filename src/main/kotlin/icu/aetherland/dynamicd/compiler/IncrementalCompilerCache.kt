@@ -16,6 +16,9 @@ data class CachedFileAnalysis(
     val integrations: Set<String>,
     val diagnostics: List<Diagnostic>,
     val exportedFunctions: List<String>,
+    val dependencies: List<String>,
+    val compiledPredicates: Int,
+    val throttledEvents: Int,
 )
 
 class IncrementalCompilerCache {
