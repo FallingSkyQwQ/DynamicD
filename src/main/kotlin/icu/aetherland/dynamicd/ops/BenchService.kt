@@ -24,6 +24,10 @@ data class BenchReport(
     val eventThroughputPerSec: Double,
     val agentSuccessRate: Double,
     val soakSamples: Int,
+    val soakStartReloadMs: Long,
+    val soakMidReloadMs: Long,
+    val soakEndReloadMs: Long,
+    val failureSample: String?,
 )
 
 class BenchService(
@@ -50,8 +54,13 @@ class BenchService(
         var reuseDenominator = 0
         var eventCountTotal = 0
         var soakSamples = 0
+        var soakStartReloadMs = 0L
+        var soakMidReloadMs = 0L
+        var soakEndReloadMs = 0L
+        val failureSamples = mutableListOf<String>()
 
         repeat(safeIterations) {
+            val runIndex = it
             val compileStart = System.nanoTime()
             val compile = moduleManager.compileModule(moduleId, "bench", perms)
             warmCompileTotal += elapsedMs(compileStart)
@@ -65,9 +74,16 @@ class BenchService(
             val reloadStart = System.nanoTime()
             val ok = moduleManager.reloadModule(moduleId, "bench", perms)
             if (ok) reloadSuccess++
-            reloadTotal += elapsedMs(reloadStart)
+            val reloadMs = elapsedMs(reloadStart)
+            reloadTotal += reloadMs
+            if (!ok) {
+                failureSamples += "iter=$runIndex reload=false"
+            }
             if (scenario == BenchScenario.SOAK) {
                 soakSamples++
+                if (runIndex == 0) soakStartReloadMs = reloadMs
+                if (runIndex == safeIterations / 2) soakMidReloadMs = reloadMs
+                if (runIndex == safeIterations - 1) soakEndReloadMs = reloadMs
             }
         }
         val stats = agentStatsProvider()
@@ -85,6 +101,10 @@ class BenchService(
             eventThroughputPerSec = throughput,
             agentSuccessRate = stats.successRate,
             soakSamples = soakSamples,
+            soakStartReloadMs = soakStartReloadMs,
+            soakMidReloadMs = soakMidReloadMs,
+            soakEndReloadMs = soakEndReloadMs,
+            failureSample = failureSamples.firstOrNull(),
         )
         write(report)
         return report
@@ -111,6 +131,10 @@ class BenchService(
         val eventThroughputPerSec = values["eventThroughputPerSec"]?.toDoubleOrNull() ?: return null
         val agentSuccessRate = values["agentSuccessRate"]?.toDoubleOrNull() ?: return null
         val soakSamples = values["soakSamples"]?.toIntOrNull() ?: return null
+        val soakStartReloadMs = values["soakStartReloadMs"]?.toLongOrNull() ?: return null
+        val soakMidReloadMs = values["soakMidReloadMs"]?.toLongOrNull() ?: return null
+        val soakEndReloadMs = values["soakEndReloadMs"]?.toLongOrNull() ?: return null
+        val failureSample = values["failureSample"]?.takeIf { it != "null" }
         return BenchReport(
             moduleId,
             iterations,
@@ -123,6 +147,10 @@ class BenchService(
             eventThroughputPerSec,
             agentSuccessRate,
             soakSamples,
+            soakStartReloadMs,
+            soakMidReloadMs,
+            soakEndReloadMs,
+            failureSample,
         )
     }
 
@@ -140,6 +168,10 @@ class BenchService(
             eventThroughputPerSec=${report.eventThroughputPerSec}
             agentSuccessRate=${report.agentSuccessRate}
             soakSamples=${report.soakSamples}
+            soakStartReloadMs=${report.soakStartReloadMs}
+            soakMidReloadMs=${report.soakMidReloadMs}
+            soakEndReloadMs=${report.soakEndReloadMs}
+            failureSample=${report.failureSample}
             """.trimIndent() + "\n",
         )
     }

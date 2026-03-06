@@ -252,6 +252,7 @@ class CompilerFacadeTest {
         File(dir, "mod.yuz").writeText(
             """
             module "dynamicd:welcome"
+            let queryResult: Result<Int, String> = ok(1)
             match queryResult {
               case ok(value) => tell player "ok"
             }
@@ -260,5 +261,26 @@ class CompilerFacadeTest {
         val result = CompilerFacade.compileModule("welcome", dir)
         assertFalse(result.success)
         assertTrue(result.diagnostics.any { it.code == "E0703" })
+    }
+
+    @Test
+    fun `enum match exhaustiveness works with typed variable target`() {
+        val dir = Files.createTempDirectory("dynamicd-mod").toFile()
+        File(dir, "mod.yuz").writeText(
+            """
+            module "dynamicd:welcome"
+            enum Rank {
+              MEMBER
+              VIP
+            }
+            let rank: Rank = Rank.VIP
+            match rank {
+              case VIP => tell player "vip"
+            }
+            """.trimIndent(),
+        )
+        val result = CompilerFacade.compileModule("welcome", dir)
+        assertFalse(result.success)
+        assertTrue(result.diagnostics.any { it.code == "E0608" })
     }
 }

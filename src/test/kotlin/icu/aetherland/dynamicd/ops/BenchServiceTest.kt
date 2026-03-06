@@ -65,11 +65,15 @@ class BenchServiceTest {
         assertTrue(report.eventThroughputPerSec >= 0.0)
         assertTrue(report.agentSuccessRate >= 0.0)
         assertEquals(3, report.soakSamples)
+        assertTrue(report.soakStartReloadMs >= 0)
+        assertTrue(report.soakMidReloadMs >= 0)
+        assertTrue(report.soakEndReloadMs >= 0)
 
         val latest = service.latest()
         assertNotNull(latest)
         assertEquals("welcome", latest.moduleId)
         assertEquals(0.7, latest.agentSuccessRate)
         assertEquals(BenchScenario.SOAK, latest.scenario)
+        assertEquals(3, latest.soakSamples)
     }
 }

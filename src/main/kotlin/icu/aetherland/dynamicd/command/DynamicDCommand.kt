@@ -350,7 +350,9 @@ class DynamicDCommand(
                     "bench module=${report.moduleId} scenario=${report.scenario} cold=${report.compileColdMs}ms warmAvg=${report.compileWarmAvgMs}ms " +
                         "reloadAvg=${report.reloadAvgMs}ms reuse=${"%.2f".format(report.incrementalReuseRatio)} " +
                         "reloadOk=${"%.2f".format(report.reloadSuccessRate)} events/s=${"%.2f".format(report.eventThroughputPerSec)} " +
-                        "agentOk=${"%.2f".format(report.agentSuccessRate)} soakSamples=${report.soakSamples}",
+                        "agentOk=${"%.2f".format(report.agentSuccessRate)} soakSamples=${report.soakSamples} " +
+                        "soak[start/mid/end]=${report.soakStartReloadMs}/${report.soakMidReloadMs}/${report.soakEndReloadMs} " +
+                        "failure=${report.failureSample ?: "none"}",
                 )
                 true
             }
@@ -365,7 +367,9 @@ class DynamicDCommand(
                     "cold=${report.compileColdMs}ms warmAvg=${report.compileWarmAvgMs}ms " +
                         "reloadAvg=${report.reloadAvgMs}ms reuse=${"%.2f".format(report.incrementalReuseRatio)} " +
                         "reloadOk=${"%.2f".format(report.reloadSuccessRate)} events/s=${"%.2f".format(report.eventThroughputPerSec)} " +
-                        "agentOk=${"%.2f".format(report.agentSuccessRate)} soakSamples=${report.soakSamples}",
+                        "agentOk=${"%.2f".format(report.agentSuccessRate)} soakSamples=${report.soakSamples} " +
+                        "soak[start/mid/end]=${report.soakStartReloadMs}/${report.soakMidReloadMs}/${report.soakEndReloadMs} " +
+                        "failure=${report.failureSample ?: "none"}",
                 )
                 true
             }

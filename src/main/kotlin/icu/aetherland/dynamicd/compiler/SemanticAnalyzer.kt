@@ -206,6 +206,7 @@ object SemanticAnalyzer {
     private fun checkMatchCoverage(file: File, ast: AstModule): List<Diagnostic> {
         val diagnostics = mutableListOf<Diagnostic>()
         val enumMap = ast.declarations.filterIsInstance<EnumDeclaration>().associateBy { it.name }
+        val inferredTypeMap = inferLocalTypes(file, ast)
         ast.declarations.filterIsInstance<MatchDeclaration>().forEach { decl ->
             if (!decl.hasElseBranch && decl.caseCount == 0) {
                 diagnostics += Diagnostic(
@@ -223,7 +224,7 @@ object SemanticAnalyzer {
                 return@forEach
             }
 
-            val enumDecl = enumMap[decl.targetExpression]
+            val enumDecl = enumMap[decl.targetExpression] ?: inferredTypeMap[decl.targetExpression]?.let { enumMap[it] }
             if (enumDecl != null && !decl.hasElseBranch) {
                 val missing = enumDecl.variants.filter { it !in decl.caseLabels }
                 if (missing.isNotEmpty()) {
@@ -323,6 +324,29 @@ object SemanticAnalyzer {
             }
         }
         return diagnostics
+    }
+
+    private fun inferLocalTypes(file: File, ast: AstModule): Map<String, String> {
+        val knownEnums = ast.declarations.filterIsInstance<EnumDeclaration>().map { it.name }.toSet()
+        val result = mutableMapOf<String, String>()
+        file.readLines().forEach { raw ->
+            val line = raw.trim()
+            val explicit = Regex("(let|var|state|persist)\\s+(\\w+)\\s*:\\s*([A-Za-z_][A-Za-z0-9_]*)")
+                .find(line)
+            if (explicit != null) {
+                result[explicit.groupValues[2]] = explicit.groupValues[3]
+                return@forEach
+            }
+            val enumCtor = Regex("(let|var)\\s+(\\w+)\\s*=\\s*([A-Za-z_][A-Za-z0-9_]*)\\.[A-Za-z_][A-Za-z0-9_]*")
+                .find(line)
+            if (enumCtor != null) {
+                val enumType = enumCtor.groupValues[3]
+                if (enumType in knownEnums) {
+                    result[enumCtor.groupValues[2]] = enumType
+                }
+            }
+        }
+        return result
     }
 
     private fun checkNullableGuards(file: File, source: String): List<Diagnostic> {
