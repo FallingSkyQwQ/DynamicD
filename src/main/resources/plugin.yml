@@ -1,5 +1,5 @@
 name: DynamicD
-version: 0.1.0
+version: 0.2.0
 main: icu.aetherland.dynamicd.DynamicDPlugin
 api-version: '1.21'
 author: DynamicD
@@ -7,20 +7,26 @@ website: https://example.invalid
 commands:
   dd:
     description: DynamicD control command
-    usage: /dd <modules|snapshot|agent>
+    usage: /dd <modules|snapshot|agent|repl|papi|perms>
     permission: dynamicd.ops
 permissions:
   dynamicd.ops:
     default: op
   dynamicd.ops.confirm.bypass:
     default: false
+  dynamicd.repl:
+    default: op
   dynamicd.agent.use:
+    default: op
+  dynamicd.agent.codegen:
     default: op
   dynamicd.agent.patch:
     default: op
   dynamicd.agent.compile:
     default: op
   dynamicd.agent.load:
+    default: op
+  dynamicd.agent.command:
     default: op
   dynamicd.agent.rollback:
     default: op

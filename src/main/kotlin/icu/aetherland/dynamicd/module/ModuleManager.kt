@@ -7,8 +7,15 @@ import icu.aetherland.dynamicd.compiler.CompileResult
 import icu.aetherland.dynamicd.compiler.CompilerFacade
 import icu.aetherland.dynamicd.compiler.Diagnostic
 import icu.aetherland.dynamicd.compiler.DiagnosticLevel
+import icu.aetherland.dynamicd.integration.IntegrationRegistry
+import icu.aetherland.dynamicd.integration.PlaceholderRegistrar
+import icu.aetherland.dynamicd.integration.PlaceholderSpec
 import icu.aetherland.dynamicd.ops.SnapshotManager
 import icu.aetherland.dynamicd.runtime.RuntimeBridge
+import icu.aetherland.dynamicd.security.Capability
+import icu.aetherland.dynamicd.security.SandboxLevel
+import icu.aetherland.dynamicd.security.SecurityDecision
+import icu.aetherland.dynamicd.security.SecurityPolicy
 import java.io.File
 import java.time.Instant
 
@@ -17,6 +24,10 @@ class ModuleManager(
     private val runtimeBridge: RuntimeBridge,
     private val snapshotManager: SnapshotManager,
     private val agentToolchain: AgentToolchain,
+    private val integrationRegistry: IntegrationRegistry,
+    private val placeholderBridge: PlaceholderRegistrar,
+    private val securityPolicy: SecurityPolicy,
+    private val defaultSandboxLevel: SandboxLevel,
     private val logger: (String) -> Unit,
 ) {
     private val modules = mutableMapOf<String, ModuleDescriptor>()
@@ -72,6 +83,62 @@ class ModuleManager(
         val decision = agentToolchain.selectPatchStrategy(astAvailable, tokenAvailable)
         agentToolchain.recordPatchDecision(operator, moduleId, decision)
         return true
+    }
+
+    fun createModule(moduleId: String, source: String, operator: String, grantedPermissions: Set<String>): Boolean {
+        val auth = agentToolchain.authorize(AgentToolAction.CREATE, grantedPermissions)
+        val sec = checkSecurity(Capability.MODULE_PATCH)
+        if (!auth.allowed || !sec.allowed) {
+            agentToolchain.recordAction(
+                operator,
+                AgentToolAction.CREATE,
+                moduleId,
+                "denied:${auth.missingPermission ?: sec.missing}",
+            )
+            return false
+        }
+        val dir = File(modulesRoot, moduleId)
+        dir.mkdirs()
+        File(dir, "mod.yuz").writeText(source.trim() + "\n")
+        discoverModules()
+        agentToolchain.recordAction(operator, AgentToolAction.CREATE, moduleId, "allowed")
+        return true
+    }
+
+    fun patchModuleText(moduleId: String, instruction: String, operator: String, grantedPermissions: Set<String>): Boolean {
+        val auth = agentToolchain.authorize(AgentToolAction.PATCH, grantedPermissions)
+        val sec = checkSecurity(Capability.MODULE_PATCH)
+        if (!auth.allowed || !sec.allowed) {
+            agentToolchain.recordAction(
+                operator,
+                AgentToolAction.PATCH,
+                moduleId,
+                "denied:${auth.missingPermission ?: sec.missing}",
+            )
+            return false
+        }
+        val module = requireModule(moduleId)
+        val file = module.directory.walkTopDown().firstOrNull { it.isFile && it.extension == "yuz" } ?: return false
+        val patchComment = "\n// agent patch: $instruction\n"
+        file.appendText(patchComment)
+        agentToolchain.recordAction(operator, AgentToolAction.PATCH, moduleId, "allowed:text_fallback")
+        return true
+    }
+
+    fun runDangerousCommand(command: String, operator: String, grantedPermissions: Set<String>): SecurityDecision {
+        val auth = agentToolchain.authorize(AgentToolAction.RUN, grantedPermissions)
+        val sec = checkSecurity(Capability.COMMAND_RUN)
+        if (!auth.allowed) {
+            val missing = auth.missingPermission ?: "dynamicd.agent.command"
+            agentToolchain.recordAction(operator, AgentToolAction.RUN, command, "denied:missing_permission:$missing")
+            return SecurityDecision(false, "missing $missing")
+        }
+        if (!sec.allowed) {
+            agentToolchain.recordAction(operator, AgentToolAction.RUN, command, "denied:${sec.missing}")
+            return sec
+        }
+        agentToolchain.recordAction(operator, AgentToolAction.RUN, command, "allowed")
+        return SecurityDecision(true)
     }
 
     fun readModule(moduleId: String, operator: String, grantedPermissions: Set<String>): List<String> {
@@ -186,6 +253,13 @@ class ModuleManager(
         if (!compileResult.success) {
             return false
         }
+        val integrationMissing = compileResult.registry.requiredIntegrations.filter {
+            !integrationRegistry.diagnostics().any { d -> d.integration == it && d.enabled }
+        }
+        if (integrationMissing.isNotEmpty()) {
+            logger("module=$moduleId integration_missing=${integrationMissing.joinToString(",")}")
+            return false
+        }
         if (module.state == ModuleState.ENABLED) {
             return true
         }
@@ -219,6 +293,16 @@ class ModuleManager(
                 val normalized = raw.lowercase()
                 activeCommands[normalized] = moduleId
                 module.activeCommands.add(normalized)
+            }
+            compileResult.registry.placeholders.forEach { name ->
+                val key = name.substringAfter(":", name).substringAfter("_", name)
+                placeholderBridge.register(
+                    PlaceholderSpec(
+                        namespace = "dd",
+                        key = key,
+                        valueProvider = { _ -> "module=$moduleId placeholder=$name" },
+                    ),
+                )
             }
             module.state = ModuleState.ENABLED
             module.lastRuntimeError = null
@@ -330,6 +414,8 @@ class ModuleManager(
                 commands = emptyList(),
                 permissions = emptyList(),
                 timers = emptyList(),
+                placeholders = emptyList(),
+                requiredIntegrations = emptySet(),
             ),
         )
     }
@@ -337,5 +423,9 @@ class ModuleManager(
     private fun requireModule(moduleId: String): ModuleDescriptor {
         return discoverModules().firstOrNull { it.id == moduleId }
             ?: throw IllegalArgumentException("Module not found: $moduleId")
+    }
+
+    private fun checkSecurity(capability: Capability): SecurityDecision {
+        return securityPolicy.check(defaultSandboxLevel, capability)
     }
 }

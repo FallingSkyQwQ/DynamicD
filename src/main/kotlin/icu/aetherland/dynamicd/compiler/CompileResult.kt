@@ -5,6 +5,8 @@ data class CompileRegistry(
     val commands: List<String>,
     val permissions: List<String>,
     val timers: List<String>,
+    val placeholders: List<String>,
+    val requiredIntegrations: Set<String>,
 )
 
 data class CompileResult(

@@ -1,22 +1,37 @@
 package icu.aetherland.dynamicd.command
 
 import icu.aetherland.dynamicd.agent.AgentToolAction
+import icu.aetherland.dynamicd.agent.loop.AgentService
+import icu.aetherland.dynamicd.integration.LuckPermsBridge
+import icu.aetherland.dynamicd.integration.PlaceholderRegistrar
 import icu.aetherland.dynamicd.module.ModuleManager
+import icu.aetherland.dynamicd.repl.ReplEvaluator
+import icu.aetherland.dynamicd.repl.ReplSessionManager
 import icu.aetherland.dynamicd.security.DangerousActionGuard
 import org.bukkit.command.Command
 import org.bukkit.command.CommandExecutor
 import org.bukkit.command.CommandSender
 import org.bukkit.command.TabCompleter
+import org.bukkit.entity.Player
+import java.time.Duration
 
 class DynamicDCommand(
     private val moduleManager: ModuleManager,
     private val dangerousActionGuard: DangerousActionGuard,
+    private val agentService: AgentService,
+    private val replSessionManager: ReplSessionManager,
+    private val replEvaluator: ReplEvaluator,
+    private val placeholderBridge: PlaceholderRegistrar,
+    private val luckPermsBridge: LuckPermsBridge,
 ) : CommandExecutor, TabCompleter {
     override fun onCommand(sender: CommandSender, command: Command, label: String, args: Array<out String>): Boolean {
         if (args.isEmpty()) {
             sender.sendMessage("/dd modules <list|load|unload|reload|compile|diag>")
             sender.sendMessage("/dd snapshot <list|create|rollback>")
-            sender.sendMessage("/dd agent <search|read|patch> ...")
+            sender.sendMessage("/dd agent <prompt...>")
+            sender.sendMessage("/dd repl <open|exec|close>")
+            sender.sendMessage("/dd papi list")
+            sender.sendMessage("/dd perms sync")
             return true
         }
         val operator = sender.name
@@ -25,6 +40,9 @@ class DynamicDCommand(
             "modules" -> handleModules(sender, operator, permissions, args.drop(1))
             "snapshot" -> handleSnapshot(sender, operator, permissions, args.drop(1))
             "agent" -> handleAgent(sender, operator, permissions, args.drop(1))
+            "repl" -> handleRepl(sender, args.drop(1))
+            "papi" -> handlePapi(sender, args.drop(1))
+            "perms" -> handlePerms(sender, args.drop(1))
             else -> {
                 sender.sendMessage("Unknown subcommand")
                 true
@@ -93,20 +111,12 @@ class DynamicDCommand(
         return when (args[0].lowercase()) {
             "list" -> {
                 val snapshots = moduleManager.listSnapshots()
-                if (snapshots.isEmpty()) {
-                    sender.sendMessage("No snapshots")
-                } else {
-                    sender.sendMessage("Snapshots: ${snapshots.joinToString(", ")}")
-                }
+                sender.sendMessage(if (snapshots.isEmpty()) "No snapshots" else "Snapshots: ${snapshots.joinToString(", ")}")
                 true
             }
             "create" -> {
                 val id = moduleManager.createSnapshot(operator, permissions)
-                if (id == null) {
-                    sender.sendMessage("snapshot create denied")
-                } else {
-                    sender.sendMessage("snapshot created: $id")
-                }
+                sender.sendMessage(if (id == null) "snapshot create denied" else "snapshot created: $id")
                 true
             }
             "rollback" -> {
@@ -137,51 +147,101 @@ class DynamicDCommand(
         args: List<String>,
     ): Boolean {
         if (args.isEmpty()) {
-            sender.sendMessage("Usage: /dd agent <search|read|patch> ...")
+            sender.sendMessage("Usage: /dd agent <prompt...> | /dd agent run <cmd> [--confirm]")
+            return true
+        }
+
+        if (args[0].equals("run", ignoreCase = true)) {
+            if (args.size < 2) {
+                sender.sendMessage("Usage: /dd agent run <cmd> [--confirm]")
+                return true
+            }
+            val confirmed = args.contains("--confirm")
+            if (!dangerousActionGuard.isConfirmed(sender, confirmed)) {
+                sender.sendMessage("Dangerous command requires --confirm")
+                return true
+            }
+            val cmd = args.filterNot { it == "--confirm" }.drop(1).joinToString(" ")
+            sender.sendMessage("agent run => ${moduleManager.runDangerousCommand(cmd, operator, permissions).allowed}")
+            return true
+        }
+
+        val prompt = args.joinToString(" ")
+        val result = agentService.runPrompt(operator, permissions, prompt)
+        sender.sendMessage("[Agent] requestId=${result.requestId} success=${result.success}")
+        result.events.takeLast(5).forEach { event ->
+            sender.sendMessage("[${event.type}] ${event.message}")
+        }
+        sender.sendMessage("[Summary] ${result.summary}")
+        return true
+    }
+
+    private fun handleRepl(sender: CommandSender, args: List<String>): Boolean {
+        if (args.isEmpty()) {
+            sender.sendMessage("Usage: /dd repl <open|exec|close>")
+            return true
+        }
+        if (!sender.hasPermission("dynamicd.repl") && !sender.isOp) {
+            sender.sendMessage("Missing permission dynamicd.repl")
             return true
         }
         return when (args[0].lowercase()) {
-            "search" -> {
-                if (args.size < 2) {
-                    sender.sendMessage("Usage: /dd agent search <query>")
-                    return true
-                }
-                val hits = moduleManager.searchModules(args[1], operator, permissions)
-                sender.sendMessage("agent search => ${if (hits.isEmpty()) "<none>" else hits.joinToString(", ")}")
+            "open" -> {
+                val session = replSessionManager.open(sender.name)
+                sender.sendMessage("repl opened session=${session.sessionId}")
                 true
             }
-            "read" -> {
+            "exec" -> {
                 if (args.size < 2) {
-                    sender.sendMessage("Usage: /dd agent read <moduleId>")
+                    sender.sendMessage("Usage: /dd repl exec <code>")
                     return true
                 }
-                val files = moduleManager.readModule(args[1], operator, permissions)
-                sender.sendMessage("agent read => ${if (files.isEmpty()) "<none>" else files.joinToString(", ")}")
+                val session = replSessionManager.get(sender.name)
+                if (session == null) {
+                    sender.sendMessage("No active REPL session, run /dd repl open")
+                    return true
+                }
+                val input = args.drop(1).joinToString(" ")
+                sender.sendMessage(replEvaluator.eval(session, input))
                 true
             }
-            "patch" -> {
-                if (args.size < 2) {
-                    sender.sendMessage("Usage: /dd agent patch <moduleId> [--ast|--token|--text]")
-                    return true
-                }
-                val moduleId = args[1]
-                val ast = args.contains("--ast") || (!args.contains("--token") && !args.contains("--text"))
-                val token = args.contains("--token")
-                val success = moduleManager.applyAgentPatch(
-                    moduleId,
-                    operator,
-                    permissions,
-                    astAvailable = ast,
-                    tokenAvailable = token,
-                )
-                sender.sendMessage("agent patch strategy recorded => $success")
+            "close" -> {
+                sender.sendMessage("repl close => ${replSessionManager.close(sender.name)}")
                 true
             }
             else -> {
-                sender.sendMessage("Usage: /dd agent <search|read|patch> ...")
+                sender.sendMessage("Usage: /dd repl <open|exec|close>")
                 true
             }
         }
+    }
+
+    private fun handlePapi(sender: CommandSender, args: List<String>): Boolean {
+        if (args.firstOrNull()?.equals("list", ignoreCase = true) != true) {
+            sender.sendMessage("Usage: /dd papi list")
+            return true
+        }
+        val keys = placeholderBridge.listRegisteredKeys()
+        sender.sendMessage(if (keys.isEmpty()) "No placeholders" else "Placeholders: ${keys.joinToString(", ")}")
+        return true
+    }
+
+    private fun handlePerms(sender: CommandSender, args: List<String>): Boolean {
+        if (args.firstOrNull()?.equals("sync", ignoreCase = true) != true) {
+            sender.sendMessage("Usage: /dd perms sync")
+            return true
+        }
+        if (sender is Player) {
+            val has = luckPermsBridge.has(sender, "dynamicd.ops")
+            sender.sendMessage("luckperms.has(dynamicd.ops)=$has")
+            val metaSet = luckPermsBridge.setMeta(sender.uniqueId, "dd-sync", "ok")
+            sender.sendMessage("luckperms.meta_set=$metaSet")
+            val grant = luckPermsBridge.grant(sender.uniqueId, "default", Duration.ofMinutes(10))
+            sender.sendMessage("luckperms.grant(default,10m)=$grant")
+        } else {
+            sender.sendMessage("Run /dd perms sync in-game for bridge verification")
+        }
+        return true
     }
 
     private fun collectPermissions(sender: CommandSender): Set<String> {
@@ -191,9 +251,13 @@ class DynamicDCommand(
                 AgentToolAction.READ,
                 AgentToolAction.SEARCH,
                 -> "dynamicd.agent.use"
+                AgentToolAction.CREATE -> "dynamicd.agent.codegen"
                 AgentToolAction.PATCH -> "dynamicd.agent.patch"
                 AgentToolAction.COMPILE -> "dynamicd.agent.compile"
-                AgentToolAction.LOAD -> "dynamicd.agent.load"
+                AgentToolAction.LOAD,
+                AgentToolAction.UNLOAD,
+                -> "dynamicd.agent.load"
+                AgentToolAction.RUN -> "dynamicd.agent.command"
                 AgentToolAction.ROLLBACK -> "dynamicd.agent.rollback"
             }
             if (sender.hasPermission(node)) {
@@ -204,9 +268,11 @@ class DynamicDCommand(
             all.addAll(
                 setOf(
                     "dynamicd.agent.use",
+                    "dynamicd.agent.codegen",
                     "dynamicd.agent.patch",
                     "dynamicd.agent.compile",
                     "dynamicd.agent.load",
+                    "dynamicd.agent.command",
                     "dynamicd.agent.rollback",
                 ),
             )
@@ -230,7 +296,7 @@ class DynamicDCommand(
         args: Array<out String>,
     ): MutableList<String> {
         if (args.size == 1) {
-            return mutableListOf("modules", "snapshot", "agent")
+            return mutableListOf("modules", "snapshot", "agent", "repl", "papi", "perms")
                 .filter { it.startsWith(args[0], ignoreCase = true) }
                 .toMutableList()
         }
@@ -244,10 +310,16 @@ class DynamicDCommand(
                 .filter { it.startsWith(args[1], ignoreCase = true) }
                 .toMutableList()
         }
-        if (args.size == 2 && args[0].equals("agent", ignoreCase = true)) {
-            return mutableListOf("search", "read", "patch")
+        if (args.size == 2 && args[0].equals("repl", ignoreCase = true)) {
+            return mutableListOf("open", "exec", "close")
                 .filter { it.startsWith(args[1], ignoreCase = true) }
                 .toMutableList()
+        }
+        if (args.size == 2 && args[0].equals("papi", ignoreCase = true)) {
+            return mutableListOf("list").filter { it.startsWith(args[1], ignoreCase = true) }.toMutableList()
+        }
+        if (args.size == 2 && args[0].equals("perms", ignoreCase = true)) {
+            return mutableListOf("sync").filter { it.startsWith(args[1], ignoreCase = true) }.toMutableList()
         }
         return mutableListOf()
     }

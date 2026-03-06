@@ -2,10 +2,14 @@ package icu.aetherland.dynamicd.module
 
 import icu.aetherland.dynamicd.agent.AgentToolchain
 import icu.aetherland.dynamicd.audit.AuditLogger
+import icu.aetherland.dynamicd.integration.InMemoryPlaceholderRegistrar
+import icu.aetherland.dynamicd.integration.IntegrationRegistry
 import icu.aetherland.dynamicd.ops.SnapshotManager
 import icu.aetherland.dynamicd.runtime.ListenerHandle
 import icu.aetherland.dynamicd.runtime.RuntimeBridge
 import icu.aetherland.dynamicd.runtime.TaskHandle
+import icu.aetherland.dynamicd.security.SandboxLevel
+import icu.aetherland.dynamicd.security.SecurityPolicy
 import java.io.File
 import java.nio.file.Files
 import kotlin.test.Test
@@ -111,6 +115,16 @@ class ModuleManagerTest {
             runtimeBridge = runtime,
             snapshotManager = SnapshotManager(File(root, "snapshots")),
             agentToolchain = AgentToolchain(AuditLogger(auditFile)),
+            integrationRegistry = IntegrationRegistry.fromAvailability(
+                mapOf(
+                    "PlaceholderAPI" to true,
+                    "LuckPerms" to true,
+                    "Vault" to true,
+                ),
+            ),
+            placeholderBridge = InMemoryPlaceholderRegistrar(),
+            securityPolicy = SecurityPolicy(),
+            defaultSandboxLevel = SandboxLevel.ADMIN,
             logger = {},
         )
         manager.discoverModules()

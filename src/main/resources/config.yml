@@ -1,0 +1,25 @@
+runtime:
+  auto-load-modules: true
+  compile-on-startup: true
+
+agent:
+  enabled: true
+  provider: openai-compatible
+  endpoint: ""
+  model: gpt-4o-mini
+  api-key: ""
+  max-iterations: 8
+  require-confirm-for-dangerous: true
+
+repl:
+  enabled: true
+  in-game: true
+  timeout-seconds: 15
+
+integrations:
+  papi: auto
+  luckperms: auto
+  vault: auto
+
+security:
+  default-sandbox-level: TRUSTED

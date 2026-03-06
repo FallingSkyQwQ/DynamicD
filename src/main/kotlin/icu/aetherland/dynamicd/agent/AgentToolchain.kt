@@ -5,9 +5,12 @@ import icu.aetherland.dynamicd.audit.AuditLogger
 enum class AgentToolAction {
     READ,
     SEARCH,
+    CREATE,
     PATCH,
     COMPILE,
     LOAD,
+    UNLOAD,
+    RUN,
     ROLLBACK,
 }
 
@@ -17,9 +20,11 @@ class AgentToolchain(private val auditLogger: AuditLogger) {
     companion object {
         val SYSTEM_PERMISSIONS = setOf(
             "dynamicd.agent.use",
+            "dynamicd.agent.codegen",
             "dynamicd.agent.patch",
             "dynamicd.agent.compile",
             "dynamicd.agent.load",
+            "dynamicd.agent.command",
             "dynamicd.agent.rollback",
         )
     }
@@ -29,9 +34,13 @@ class AgentToolchain(private val auditLogger: AuditLogger) {
             AgentToolAction.READ,
             AgentToolAction.SEARCH,
             -> "dynamicd.agent.use"
+            AgentToolAction.CREATE -> "dynamicd.agent.codegen"
             AgentToolAction.PATCH -> "dynamicd.agent.patch"
             AgentToolAction.COMPILE -> "dynamicd.agent.compile"
-            AgentToolAction.LOAD -> "dynamicd.agent.load"
+            AgentToolAction.LOAD,
+            AgentToolAction.UNLOAD,
+            -> "dynamicd.agent.load"
+            AgentToolAction.RUN -> "dynamicd.agent.command"
             AgentToolAction.ROLLBACK -> "dynamicd.agent.rollback"
         }
         return if (required in grantedPermissions) {

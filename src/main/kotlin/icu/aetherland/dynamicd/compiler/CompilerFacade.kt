@@ -24,6 +24,8 @@ object CompilerFacade {
         val allCommands = mutableListOf<String>()
         val allPermissions = mutableListOf<String>()
         val allTimers = mutableListOf<String>()
+        val allPlaceholders = mutableListOf<String>()
+        val requiredIntegrations = mutableSetOf<String>()
 
         sourceFiles.forEach { file ->
             val source = file.readText()
@@ -34,6 +36,8 @@ object CompilerFacade {
             allCommands.addAll(ast.declarations.filterIsInstance<CommandDeclaration>().map { it.raw })
             allPermissions.addAll(ast.declarations.filterIsInstance<PermissionDeclaration>().map { it.node })
             allTimers.addAll(ast.declarations.filterIsInstance<TimerDeclaration>().map { "${it.timerType}:${it.durationLiteral}" })
+            allPlaceholders.addAll(extractPlaceholders(source))
+            requiredIntegrations.addAll(extractIntegrations(source))
         }
 
         val success = diagnostics.none { it.level == DiagnosticLevel.ERROR }
@@ -46,6 +50,8 @@ object CompilerFacade {
                 commands = allCommands.distinct(),
                 permissions = allPermissions.distinct(),
                 timers = allTimers.distinct(),
+                placeholders = allPlaceholders.distinct(),
+                requiredIntegrations = requiredIntegrations,
             ),
         )
     }
@@ -149,7 +155,44 @@ object CompilerFacade {
                 commands = emptyList(),
                 permissions = emptyList(),
                 timers = emptyList(),
+                placeholders = emptyList(),
+                requiredIntegrations = emptySet(),
             ),
         )
+    }
+
+    private fun extractPlaceholders(source: String): List<String> {
+        val placeholders = mutableListOf<String>()
+        source.lines().forEach { raw ->
+            val line = raw.trim()
+            if (line.startsWith("placeholder ")) {
+                val name = Regex("placeholder\\s+\"([^\"]+)\"").find(line)?.groupValues?.getOrNull(1)
+                if (!name.isNullOrBlank()) {
+                    placeholders += name
+                }
+            }
+            if (line.startsWith("papi namespace ")) {
+                val namespace = Regex("papi\\s+namespace\\s+\"([^\"]+)\"").find(line)?.groupValues?.getOrNull(1)
+                if (!namespace.isNullOrBlank()) {
+                    placeholders += "$namespace:*"
+                }
+            }
+        }
+        return placeholders
+    }
+
+    private fun extractIntegrations(source: String): Set<String> {
+        val found = mutableSetOf<String>()
+        val lowered = source.lowercase()
+        if ("papi " in lowered || "placeholder " in lowered) {
+            found += "PlaceholderAPI"
+        }
+        if ("luckperms." in lowered || "luckperms " in lowered) {
+            found += "LuckPerms"
+        }
+        if ("vault." in lowered || "vault " in lowered) {
+            found += "Vault"
+        }
+        return found
     }
 }
