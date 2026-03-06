@@ -41,8 +41,8 @@
   - Implementation: `AstPatchEngine` supports idempotent `upsert use`, guarded replace, duplicate-safe append.
   - Tests: `AstPatchEngineTest.ast patch upsert use is idempotent`.
 - 更强 Agent 循环
-  - Implementation: `PLAN/TOOL/REFLECT/FINAL` protocol parser, no-progress stall detection, structured summary with plan/tool trace.
-  - Tests: `AgentLoopEngineTest.loop captures plan reflect and stalls on no progress`.
+  - Implementation: `PLAN/TOOL/REFLECT/FINAL` protocol parser, no-progress stall detection, prompt decomposition seed plan, batch tool calls for read/search/list, and optional self-check retry loop.
+  - Tests: `AgentLoopEngineTest.loop captures plan reflect and stalls on no progress`, `AgentLoopEngineTest.loop retries when self check fails then succeeds`, `AgentProtocolTest`.
 - 宿主扩展 SPI 生态化
   - Implementation: `integration.spi` (`YuzHostExtension`, `ExtensionRegistry`, in-memory registries, ServiceLoader discover).
   - Tests: `ExtensionRegistryTest.registry records extension published contracts`.

@@ -147,4 +147,56 @@ class AgentLoopEngineTest {
         assertTrue(result.events.any { it.type.name == "PLAN_UPDATED" })
         assertTrue(result.events.any { it.type.name == "REFLECTION" })
     }
+
+    @Test
+    fun `loop retries when self check fails then succeeds`() {
+        val root = Files.createTempDirectory("dynamicd-agent-loop-selfcheck").toFile()
+        val moduleRoot = File(root, "modules").apply { mkdirs() }
+        val manager = ModuleManager(
+            modulesRoot = moduleRoot,
+            runtimeBridge = object : RuntimeBridge {
+                override fun bindEvent(moduleId: String, eventPath: String): ListenerHandle? = null
+                override fun bindTimer(moduleId: String, timerSpec: String): TaskHandle? = null
+            },
+            snapshotManager = SnapshotManager(File(root, "snapshots")),
+            agentToolchain = AgentToolchain(AuditLogger(File(root, "audit.log"))),
+            integrationRegistry = IntegrationRegistry.fromAvailability(
+                mapOf("PlaceholderAPI" to true, "LuckPerms" to true, "Vault" to true),
+            ),
+            placeholderBridge = InMemoryPlaceholderRegistrar(),
+            securityPolicy = SecurityPolicy(),
+            defaultSandboxLevel = SandboxLevel.ADMIN,
+            logger = {},
+        )
+
+        val provider = object : LlmProvider {
+            override val name: String = "selfcheck"
+            private var count = 0
+            override fun complete(request: LlmRequest): LlmResponse {
+                count++
+                return when (count) {
+                    1 -> LlmResponse("TOOL:create demo module \"dynamicd:demo\"")
+                    2 -> LlmResponse("FINAL:first")
+                    3 -> LlmResponse("FAIL:missing load")
+                    4 -> LlmResponse("TOOL:load demo")
+                    5 -> LlmResponse("FINAL:done")
+                    else -> LlmResponse("PASS")
+                }
+            }
+        }
+        val engine = AgentLoopEngine(
+            provider = provider,
+            toolExecutor = AgentToolExecutor(manager),
+            config = AgentLoopConfig(
+                model = "selfcheck",
+                maxIterations = 8,
+                selfCheckEnabled = true,
+                maxSelfCheckRetries = 2,
+            ),
+        )
+        val result = engine.run("tester", AgentToolchain.SYSTEM_PERMISSIONS, "create and load demo")
+        assertTrue(result.success)
+        assertTrue(result.summary.contains("done"))
+        assertTrue(result.events.any { it.type.name == "REFLECTION" && it.message.contains("self-check failed") })
+    }
 }

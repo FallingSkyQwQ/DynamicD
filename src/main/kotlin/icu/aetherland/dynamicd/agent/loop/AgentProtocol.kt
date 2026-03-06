@@ -46,6 +46,13 @@ object AgentProtocol {
                         toolCalls += ToolCall(tool, extractJsonString(line, "args").orEmpty())
                     }
                 }
+                line.startsWith("TOOLS:", ignoreCase = true) -> {
+                    val payload = line.substringAfter("TOOLS:", "").trim()
+                    toolCalls += parseToolArray(payload)
+                }
+                line.startsWith("[") && line.contains("\"tool\"") -> {
+                    toolCalls += parseToolArray(line)
+                }
                 line.startsWith("{") && line.contains("\"final\"") -> {
                     finalSummary = extractJsonString(line, "final")
                 }
@@ -89,5 +96,22 @@ object AgentProtocol {
             i++
         }
         return sb.toString()
+    }
+
+    private fun parseToolArray(payload: String): List<ToolCall> {
+        if (payload.isBlank()) return emptyList()
+        val entries = Regex("\\{[^{}]*\"tool\"\\s*:\\s*\"[^\"]+\"[^{}]*}")
+            .findAll(payload)
+            .map { it.value }
+            .toList()
+        if (entries.isEmpty()) return emptyList()
+        return entries.mapNotNull { item ->
+            val tool = extractJsonString(item, "tool")
+            if (tool.isNullOrBlank()) {
+                null
+            } else {
+                ToolCall(tool, extractJsonString(item, "args").orEmpty())
+            }
+        }
     }
 }

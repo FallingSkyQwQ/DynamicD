@@ -10,6 +10,8 @@ agent:
   api-key: ""
   max-iterations: 8
   require-confirm-for-dangerous: true
+  self-check-enabled: true
+  max-self-check-retries: 1
 
 repl:
   enabled: true

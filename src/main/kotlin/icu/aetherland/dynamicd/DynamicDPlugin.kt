@@ -133,6 +133,8 @@ class DynamicDPlugin : JavaPlugin() {
             config = AgentLoopConfig(
                 model = dynamicDConfig.agent.model.ifBlank { "gpt-4o-mini" },
                 maxIterations = dynamicDConfig.agent.maxIterations,
+                selfCheckEnabled = dynamicDConfig.agent.selfCheckEnabled,
+                maxSelfCheckRetries = dynamicDConfig.agent.maxSelfCheckRetries,
             ),
         )
         val agentService = AgentService(

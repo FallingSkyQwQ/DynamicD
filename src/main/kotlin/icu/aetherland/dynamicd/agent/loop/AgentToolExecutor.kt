@@ -1,12 +1,16 @@
 package icu.aetherland.dynamicd.agent.loop
 
-import icu.aetherland.dynamicd.agent.AgentToolAction
 import icu.aetherland.dynamicd.module.ModuleManager
 import org.bukkit.Bukkit
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class AgentToolExecutor(
     private val moduleManager: ModuleManager,
 ) {
+    private val parallelSafeTools = setOf("list", "read", "search")
+
     fun execute(
         operator: String,
         permissions: Set<String>,
@@ -25,6 +29,33 @@ class AgentToolExecutor(
             "rollback" -> moduleManager.rollback(args.trim(), operator, permissions).toString()
             "run" -> runCommand(operator, permissions, args.trim())
             else -> "unsupported_tool:$toolName"
+        }
+    }
+
+    fun executeBatch(
+        operator: String,
+        permissions: Set<String>,
+        calls: List<ToolCall>,
+    ): List<String> {
+        if (calls.isEmpty()) return emptyList()
+        val allSafe = calls.all { it.name.lowercase() in parallelSafeTools }
+        if (!allSafe || calls.size == 1) {
+            return calls.map { call ->
+                "${call.name}=${execute(operator, permissions, call.name, call.args)}"
+            }
+        }
+        val executor = Executors.newFixedThreadPool(minOf(4, calls.size))
+        return try {
+            val futures = calls.map { call ->
+                executor.submit(
+                    Callable {
+                        "${call.name}=${execute(operator, permissions, call.name, call.args)}"
+                    },
+                )
+            }
+            futures.map { it.get(8, TimeUnit.SECONDS) }
+        } finally {
+            executor.shutdownNow()
         }
     }
 

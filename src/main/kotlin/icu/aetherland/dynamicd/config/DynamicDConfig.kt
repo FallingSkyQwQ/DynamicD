@@ -22,6 +22,8 @@ data class AgentConfig(
     val apiKey: String,
     val maxIterations: Int,
     val requireConfirmForDangerous: Boolean,
+    val selfCheckEnabled: Boolean,
+    val maxSelfCheckRetries: Int,
 )
 
 data class ReplConfig(
@@ -65,6 +67,8 @@ data class DynamicDConfig(
                     apiKey = config.getString("agent.api-key", "").orEmpty(),
                     maxIterations = config.getInt("agent.max-iterations", 8),
                     requireConfirmForDangerous = config.getBoolean("agent.require-confirm-for-dangerous", true),
+                    selfCheckEnabled = config.getBoolean("agent.self-check-enabled", true),
+                    maxSelfCheckRetries = config.getInt("agent.max-self-check-retries", 1),
                 ),
                 repl = ReplConfig(
                     enabled = config.getBoolean("repl.enabled", true),
