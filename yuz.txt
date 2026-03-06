@@ -1,0 +1,2604 @@
+
+
+# yuz 语言规范 v0.1
+
+## 目录
+
+1. 设计目标
+2. 术语
+3. 源文件与编码
+4. 词法规范
+5. 注释与空白
+6. 标识符与保留字
+7. 字面量
+8. 程序结构
+9. 模块系统
+10. 导入与导出
+11. 名称解析
+12. 类型系统
+13. 变量、常量与状态
+14. 表达式
+15. 语句
+16. 控制流
+17. 函数
+18. 记录、枚举、特质与实现
+19. 模式匹配
+20. 错误处理
+21. 事件系统
+22. 命令系统
+23. 调度与时间
+24. 并发与线程语义
+25. 持久化与状态存储
+26. 权限与宿主能力
+27. 占位符与插件互操作
+28. REPL 语义
+29. 编译模型
+30. 运行时模型
+31. 沙箱与安全限制
+32. 诊断与错误码
+33. 标准库总览
+34. 语法（EBNF）
+35. 示例
+36. 实现建议
+
+---
+
+# 1. 设计目标
+
+yuz 必须满足以下目标：
+
+1. **强类型**
+   所有表达式、变量、函数、模块接口必须在编译期可检查。
+
+2. **预编译**
+   `.yuz` 源文件在运行前必须完成词法分析、语法分析、名称解析、类型检查、效果检查和编译产物生成。
+
+3. **事件优先**
+   事件是语言一级结构，适合 Minecraft 服务器逻辑。
+
+4. **低门槛**
+   常见逻辑应能用短语法表达。
+
+5. **控制流友好**
+   减少深层嵌套，提供 `guard`、`match`、`when` 等结构。
+
+6. **可热加载**
+   编译产物允许运行时加载、卸载与重载。
+
+7. **宿主安全**
+   不允许任意 JVM 逃逸；所有高权限能力必须通过宿主桥。
+
+8. **插件互操作**
+   允许通过受控宿主 API 与 Paper/Bukkit 及其他插件互动。
+
+---
+
+# 2. 术语
+
+本规范中的术语定义如下：
+
+* **模块（module）**：一个可编译、可加载、可导出的 yuz 单元。
+* **编译单元（compilation unit）**：参与一次编译的模块及其依赖集合。
+* **宿主（host）**：DynamicD 运行时及其提供的桥接 API。
+* **事件处理器（event handler）**：由 `on ... { ... }` 声明的事件入口。
+* **命令处理器（command handler）**：由 `command ... { ... }` 声明的命令入口。
+* **状态（state）**：模块级内存态变量。
+* **持久状态（persist）**：会跨重载或重启保存的模块级变量。
+* **效果（effect）**：函数或宿主 API 对线程、阻塞、权限、副作用等属性的标注。
+* **可空类型（nullable type）**：形如 `T?` 的类型，可取 `null`。
+* **可选类型（option type）**：`Option<T>`，语义上表示有/无值，优于 `T?` 作为业务返回。
+* **实现定义（implementation-defined）**：由编译器或宿主决定但必须文档化的行为。
+* **宿主定义（host-defined）**：由 DynamicD 宿主 API 决定的行为。
+
+---
+
+# 3. 源文件与编码
+
+## 3.1 文件扩展名
+
+yuz 源文件扩展名必须为：
+
+```text
+.yuz
+```
+
+## 3.2 编码
+
+源文件必须使用：
+
+* UTF-8 编码
+* 可带或不带 BOM
+* 换行可为 LF 或 CRLF
+
+编译器必须统一将源文本规范化为逻辑换行序列。
+
+## 3.3 文件组织
+
+一个模块可以由一个或多个 `.yuz` 文件构成。
+模块边界由模块清单或目录结构决定，具体如下：
+
+* `module.yml` 指定模块名、版本、入口与源文件集合；或
+* 宿主按目录将同目录下 `.yuz` 文件视为同一模块
+
+这属于**宿主定义**，但编译期一个源文件只能归属一个模块。
+
+---
+
+# 4. 词法规范
+
+编译器应先对源码进行 Unicode 码点级扫描，再形成词法单元（Token）。
+
+## 4.1 Token 分类
+
+Token 分为以下几类：
+
+* 标识符
+* 关键字
+* 字面量
+* 操作符
+* 分隔符
+* 注释
+* 空白
+* 编译指令（可选）
+
+注释和空白通常不进入语法层，但必须保留位置信息以生成诊断。
+
+## 4.2 最长匹配原则
+
+如无特殊说明，词法分析采用**最长匹配**原则。
+
+例如：
+
+```yuz
+>=
+```
+
+必须识别为单一操作符，而非 `>` 与 `=` 两个 Token。
+
+---
+
+# 5. 注释与空白
+
+## 5.1 单行注释
+
+单行注释使用：
+
+```yuz
+// 这是注释
+```
+
+从 `//` 至行尾均为注释内容。
+
+## 5.2 多行注释
+
+多行注释使用：
+
+```yuz
+/* 注释 */
+```
+
+多行注释允许跨行。
+
+## 5.3 嵌套注释
+
+v0.1 中，**多行注释不允许嵌套**。
+嵌套视为词法错误。
+
+## 5.4 空白字符
+
+以下字符视为空白：
+
+* 空格
+* 制表符
+* 换行
+* 回车
+
+空白用于分隔 Token，但在字符串与文本字面量内部保留。
+
+---
+
+# 6. 标识符与保留字
+
+## 6.1 标识符
+
+标识符语法：
+
+* 首字符：Unicode 字母或 `_`
+* 后续字符：Unicode 字母、数字、`_`
+
+推荐实现初期限制为：
+
+* ASCII 字母
+* 数字
+* `_`
+
+正式实现可扩展 Unicode 标识符支持。
+
+示例：
+
+```yuz
+player
+join_count
+_unsafe
+Reward
+```
+
+非法示例：
+
+```yuz
+3abc
+hello-world
+```
+
+## 6.2 大小写敏感
+
+yuz 是**大小写敏感**语言。
+
+```yuz
+Player
+player
+PLAYER
+```
+
+视为不同名称。
+
+## 6.3 保留字
+
+以下为 v0.1 保留字，不能作为用户定义标识符：
+
+```text
+module
+version
+use
+export
+as
+from
+
+let
+var
+const
+state
+persist
+
+fn
+return
+
+record
+enum
+trait
+impl
+
+if
+else
+match
+case
+when
+guard
+for
+in
+while
+break
+continue
+defer
+
+on
+every
+after
+later
+async
+sync
+
+command
+permission
+placeholder
+
+true
+false
+null
+
+is
+not
+and
+or
+
+try
+catch
+throw
+
+ok
+err
+where
+priority
+ignoreCancelled
+throttle
+by
+for
+default
+namespace
+```
+
+说明：
+
+* `try/catch/throw` 在 v0.1 为**保留但未完整启用**，避免未来破坏兼容。
+* `ok`、`err` 既是保留字也是 `Result` 构造语义关键字。
+
+---
+
+# 7. 字面量
+
+## 7.1 整数字面量
+
+整数字面量默认为 `Int`，若超出 `Int` 范围则推断为 `Long`，超出则编译错误。
+
+支持：
+
+```yuz
+0
+1
+42
+1_000_000
+```
+
+下划线仅用于分组显示，不影响值。
+
+v0.1 不支持二进制、八进制、十六进制字面量；后续版本可扩展。
+
+## 7.2 浮点字面量
+
+浮点字面量默认为 `Double`。
+
+```yuz
+1.0
+3.14
+0.5
+1_000.25
+```
+
+后缀 `f` 可选表示 `Float`：
+
+```yuz
+1.0f
+```
+
+## 7.3 布尔字面量
+
+```yuz
+true
+false
+```
+
+类型为 `Bool`。
+
+## 7.4 空字面量
+
+```yuz
+null
+```
+
+`null` 仅可赋给：
+
+* `T?`
+* 某些宿主定义的引用兼容位点
+
+禁止赋给非可空类型。
+
+## 7.5 字符串字面量
+
+双引号包裹：
+
+```yuz
+"hello"
+"玩家名: {player.name}"
+```
+
+支持转义：
+
+* `\"`
+* `\\`
+* `\n`
+* `\r`
+* `\t`
+
+### 7.5.1 插值字符串
+
+字符串中允许 `{expr}` 插值：
+
+```yuz
+"你好，{player.name}"
+```
+
+插值表达式必须是单个表达式，且其结果必须可转换为 `String`。
+
+插值在运行期求值。
+
+## 7.6 多行字符串
+
+三引号形式：
+
+```yuz
+"""
+line1
+line2
+"""
+```
+
+多行字符串保留内部换行。
+
+v0.1 中，多行字符串不启用插值。
+若需要插值，必须通过常规字符串拼接或模板 API。
+
+## 7.7 Duration 字面量
+
+支持时间字面量：
+
+```yuz
+1t
+5s
+2m
+1h
+3d
+```
+
+单位：
+
+* `t` = tick
+* `s` = second
+* `m` = minute
+* `h` = hour
+* `d` = day
+
+类型为 `Duration`。
+
+Duration 字面量必须是非负整数加单位。
+
+## 7.8 列表字面量
+
+```yuz
+[1, 2, 3]
+["a", "b"]
+[]
+```
+
+类型推导规则：
+
+* 若元素非空且同型，则为 `List<T>`
+* 若为空列表，必须从上下文推导，或显式标注
+
+例如：
+
+```yuz
+let xs: List<Int> = []
+```
+
+## 7.9 映射字面量
+
+```yuz
+{"a": 1, "b": 2}
+{}
+```
+
+类型推导同列表字面量。
+
+## 7.10 集合字面量
+
+v0.1 不提供专用集合字面量。
+集合通过标准库工厂函数构造：
+
+```yuz
+set()
+setOf(1, 2, 3)
+```
+
+---
+
+# 8. 程序结构
+
+一个模块由若干顶层声明组成。
+
+允许的顶层声明：
+
+* `module`
+* `version`
+* `use`
+* `export`
+* `const`
+* `state`
+* `persist`
+* `fn`
+* `record`
+* `enum`
+* `trait`
+* `impl`
+* `on`
+* `every`
+* `after`
+* `command`
+* `permission`
+* `placeholder`
+* 宿主扩展顶层声明
+
+顶层不允许任意表达式语句。
+
+---
+
+# 9. 模块系统
+
+## 9.1 模块声明
+
+每个模块必须有且仅有一个逻辑模块名。
+
+形式：
+
+```yuz
+module "dynamicd:welcome"
+```
+
+模块名必须是字符串字面量，推荐格式：
+
+```text
+namespace:name
+```
+
+例如：
+
+```text
+dynamicd:welcome
+myserver:economy
+```
+
+## 9.2 版本声明
+
+可选声明：
+
+```yuz
+version "1.0.0"
+```
+
+版本字符串格式由宿主定义，推荐 SemVer。
+
+## 9.3 模块唯一性
+
+在同一运行时中，模块名必须唯一。
+重复模块名由宿主在加载阶段拒绝。
+
+## 9.4 文件内模块声明规则
+
+同一源文件中：
+
+* `module` 最多出现一次
+* 若出现，必须位于首个非注释、非空白顶层语句之前
+
+同一模块的多个源文件可省略重复 `module` 声明，但编译器必须确保它们属于同一模块。
+
+---
+
+# 10. 导入与导出
+
+## 10.1 use 导入
+
+```yuz
+use std.chat.*
+use std.player.Player
+use std.player.Player as P
+```
+
+形式包括：
+
+1. 通配导入
+2. 单符号导入
+3. 别名导入
+
+## 10.2 导入目标
+
+可导入：
+
+* 宿主标准库模块
+* 其他 yuz 模块的 `export` 符号
+* 宿主扩展符号
+
+## 10.3 export 导出
+
+导出仅适用于顶层声明：
+
+```yuz
+export fn greet(p: Player) { ... }
+export record Reward { ... }
+export const PREFIX = "&6[Server]"
+```
+
+未导出符号默认为模块私有。
+
+## 10.4 可见性
+
+可见性级别仅两种：
+
+* 模块私有
+* 模块导出
+
+v0.1 不支持 `public/private/internal/protected` 等多级可见性。
+
+---
+
+# 11. 名称解析
+
+## 11.1 解析顺序
+
+编译器必须按以下优先级解析名称：
+
+1. 局部作用域
+2. 参数作用域
+3. 闭包捕获作用域
+4. 顶层声明
+5. 显式导入符号
+6. 通配导入符号
+7. 预导入宿主符号（若启用）
+
+## 11.2 歧义
+
+若同名符号来源多个且无唯一最佳候选，编译错误。
+
+必须通过：
+
+* 别名
+* 全限定名
+* 减少导入范围
+
+解决。
+
+## 11.3 遮蔽
+
+局部名称可以遮蔽外层名称。
+但以下情况推荐给出警告：
+
+* 参数遮蔽顶层常量
+* 局部变量遮蔽事件注入变量
+* 局部变量遮蔽导入类型名
+
+---
+
+# 12. 类型系统
+
+## 12.1 类型分类
+
+yuz 类型分为：
+
+1. **原始值类型**
+
+   * `Int`
+   * `Long`
+   * `Float`
+   * `Double`
+   * `Bool`
+   * `String`
+   * `Duration`
+
+2. **宿主值类型**
+
+   * `Player`
+   * `World`
+   * `Location`
+   * `Entity`
+   * `Block`
+   * `Item`
+   * `Inventory`
+   * `Uuid`
+   * `Text`
+   * 等
+
+3. **复合类型**
+
+   * `List<T>`
+   * `Set<T>`
+   * `Map<K, V>`
+   * `Option<T>`
+   * `Result<T, E>`
+
+4. **用户定义类型**
+
+   * `record`
+   * `enum`
+   * `trait`
+
+5. **可空类型**
+
+   * `T?`
+
+## 12.2 非空默认
+
+所有类型默认非空。
+
+```yuz
+let p: Player
+```
+
+意味着 `p` 不能为 `null`。
+
+若允许空，必须显式写：
+
+```yuz
+let p: Player?
+```
+
+## 12.3 可空类型规则
+
+`T?` 可取：
+
+* `T` 的任意值
+* `null`
+
+对 `T?` 取成员时必须：
+
+* `guard` 非空
+* `if x != null`
+* 安全调用（若未来扩展）
+* 宿主特定消解规则
+
+v0.1 不引入 `?.`，避免语法膨胀。
+
+## 12.4 Option 与 Nullable 的区别
+
+* `T?`：语言层空引用兼容
+* `Option<T>`：业务层有/无值建模
+
+规范建议：
+
+* API 查询、查找、业务返回优先 `Option<T>`
+* 与宿主对象桥接时允许 `T?`
+
+## 12.5 类型等价
+
+yuz 采用**名义类型系统**为主：
+
+* `record`、`enum`、`trait` 均按名称判等
+* 泛型类型按构造器与参数判等
+* 可空类型按基础类型加空性判等
+
+## 12.6 子类型关系
+
+v0.1 中仅定义有限子类型关系：
+
+1. `T` 是 `T?` 的子类型
+2. 宿主定义的类型层次，例如：
+
+   * `Player <: Entity`
+   * `OfflinePlayer` 与 `Player` 不互为子类型
+3. `record`、`enum` 默认无继承
+4. `trait` 通过 `impl` 实现约束，不构成经典 OO 继承树
+
+## 12.7 数值转换
+
+允许的隐式转换仅限：
+
+* `Int -> Long`
+* `Int -> Double`
+* `Int -> Float`
+* `Long -> Double`
+* `Float -> Double`
+
+其余数值转换必须显式调用：
+
+```yuz
+toInt(x)
+toLong(x)
+toDouble(x)
+```
+
+规范建议实现尽量减少隐式转换，避免困惑。
+
+## 12.8 类型推导
+
+允许局部类型推导：
+
+```yuz
+let x = 1
+let name = player.name
+```
+
+必须能唯一推导。
+若不能唯一推导，编译错误，要求显式标注。
+
+以下位置必须显式类型或可推导类型明确：
+
+* 函数返回类型：推荐强制显式
+* 空集合初始化
+* 递归函数
+* 顶层状态声明
+
+---
+
+# 13. 变量、常量与状态
+
+## 13.1 局部变量
+
+```yuz
+let a = 1
+var count: Int = 0
+```
+
+* `let`：绑定后不可重新赋值
+* `var`：可重新赋值
+
+注意：对于宿主对象引用，`let` 只限制绑定不变，不限制对象内部状态变化。
+
+## 13.2 顶层常量
+
+```yuz
+const PREFIX = "&6[Server]"
+```
+
+顶层 `const` 必须满足编译期常量初始化条件：
+
+允许：
+
+* 基本字面量
+* 常量表达式
+* 其他 `const`
+
+不允许：
+
+* 运行时函数调用
+* 宿主对象获取
+* IO
+* 动态集合构造
+
+## 13.3 顶层状态
+
+```yuz
+state combo: Map<Uuid, Int> = map()
+```
+
+`state` 表示模块级内存态，生命周期与模块一致：
+
+* 模块加载后初始化
+* 模块卸载后销毁
+* 默认不持久化
+
+## 13.4 持久状态
+
+```yuz
+persist coins: Map<Uuid, Int> = map()
+```
+
+`persist` 表示持久化模块状态：
+
+* 模块重载后应恢复
+* 服务器重启后可恢复
+* 序列化格式由宿主定义
+
+若初始化表达式与持久化状态不兼容，编译或加载错误。
+
+## 13.5 初始化顺序
+
+顶层声明初始化顺序为：
+
+1. `const`
+2. `state`
+3. `persist` 恢复或初始化
+4. 其他宿主注册表声明
+5. 生命周期入口（如 `on load`）
+
+若初始化存在循环依赖，则编译错误。
+
+---
+
+# 14. 表达式
+
+## 14.1 概述
+
+表达式必须有类型。
+某些表达式还具有效果标签。
+
+## 14.2 主表达式
+
+包括：
+
+* 字面量
+* 标识符
+* 括号表达式
+* 列表/映射字面量
+* 函数调用
+* 成员访问
+* 索引访问
+* `if` 表达式
+* `match` 表达式
+* lambda（v0.1 可选，默认不公开）
+* 构造表达式
+
+## 14.3 成员访问
+
+```yuz
+player.name
+world.spawnLocation
+reward.amount
+```
+
+成员解析规则：
+
+* 优先字段/属性
+* 其次零参 getter 桥接
+* 再次宿主扩展属性
+
+此为宿主定义，但必须稳定文档化。
+
+## 14.4 索引访问
+
+```yuz
+list[0]
+map["coins"]
+```
+
+类型规则：
+
+* `List<T>[Int] -> T`
+* `Map<K, V>[K] -> V`
+
+越界或缺键行为：
+
+* `List` 越界：运行时错误
+* `Map` 缺键：运行时错误或宿主定义；推荐显式使用 `getOrDefault`
+
+## 14.5 函数调用
+
+```yuz
+greet(player)
+teleport(player, loc)
+```
+
+支持：
+
+* 位置参数
+* 命名参数（可选）
+* 默认参数
+
+同名重载在 v0.1 **不推荐**；若启用，解析规则必须严格无歧义。
+
+## 14.6 算术运算
+
+支持：
+
+* `+`
+* `-`
+* `*`
+* `/`
+* `%`
+
+类型规则：
+
+* 数值类型参与数值运算
+* `String + Any` 表示拼接
+* `Duration + Duration -> Duration`
+* `Duration * Int -> Duration`
+
+不支持任意宿主对象的 `+` 重载。
+
+## 14.7 比较运算
+
+支持：
+
+* `==`
+* `!=`
+* `<`
+* `<=`
+* `>`
+* `>=`
+
+`==` 和 `!=` 适用于所有可比较类型。
+顺序比较仅适用于：
+
+* 数值
+* `String`
+* `Duration`
+* 宿主显式声明可排序类型
+
+## 14.8 逻辑运算
+
+支持：
+
+* `and`
+* `or`
+* `not`
+
+规则：
+
+* `and`、`or` 必须短路求值
+* 操作数类型必须为 `Bool`
+
+## 14.9 类型测试
+
+```yuz
+if victim is Player { ... }
+if not (sender is Player) { ... }
+```
+
+`is` 表示运行时类型测试或 enum/trait 匹配测试。
+
+若测试成功，编译器应在该分支中做类型收窄。
+
+## 14.10 if 表达式
+
+```yuz
+let msg = if vip { "VIP" } else { "MEMBER" }
+```
+
+规则：
+
+* 条件必须为 `Bool`
+* `then` 和 `else` 必须可合并为公共超类型
+* 若无 `else`，则只能用作语句，不可作为值表达式
+
+## 14.11 match 表达式
+
+```yuz
+let r = match rank {
+    case Rank.ADMIN => 3
+    case Rank.VIP => 2
+    else => 1
+}
+```
+
+规则：
+
+* 每个分支表达式类型须可合并
+* 若不穷尽，必须有 `else`
+* enum 的完整穷举可省略 `else`
+
+---
+
+# 15. 语句
+
+## 15.1 语句类别
+
+包括：
+
+* 变量声明
+* 赋值
+* 表达式语句
+* 块语句
+* `if`
+* `match`
+* `guard`
+* `for`
+* `while`
+* `break`
+* `continue`
+* `return`
+* `defer`
+* `cancel`
+* 宿主语句
+
+## 15.2 表达式语句
+
+允许将有副作用表达式作为语句：
+
+```yuz
+tell(player, "hello")
+coins[player.uuid] = 10
+```
+
+纯表达式若无副作用，编译器应给警告。
+
+## 15.3 赋值
+
+```yuz
+var x = 1
+x = 2
+```
+
+也支持成员与索引赋值：
+
+```yuz
+player.health = 20.0
+coins[player.uuid] = 100
+```
+
+是否允许写入某成员由宿主 API 定义。
+
+## 15.4 块语句
+
+```yuz
+{
+    let a = 1
+    let b = 2
+}
+```
+
+块引入新作用域。
+
+## 15.5 cancel 语句
+
+仅在可取消事件上下文中允许：
+
+```yuz
+cancel true
+cancel false
+```
+
+等价于操作事件取消标记。
+在不可取消事件中使用是编译错误。
+
+---
+
+# 16. 控制流
+
+## 16.1 if 语句
+
+```yuz
+if cond {
+    ...
+} else if other {
+    ...
+} else {
+    ...
+}
+```
+
+## 16.2 guard 语句
+
+`guard` 是降低嵌套的核心结构。
+
+```yuz
+guard target != null else {
+    tell sender "目标不存在"
+    return
+}
+```
+
+语义：
+
+* 先求值条件
+* 若条件为假，执行 `else` 块
+* `else` 块必须以控制流终止结束：
+
+  * `return`
+  * `break`
+  * `continue`
+  * `throw`（未来）
+  * 或宿主定义的终止形式
+
+若 `guard` 检查某变量非空、某类型断言成功等，后续作用域应做类型收窄。
+
+## 16.3 while 语句
+
+```yuz
+while energy > 0 {
+    energy -= 1
+}
+```
+
+条件每轮求值一次。
+
+## 16.4 for-in 语句
+
+```yuz
+for p in onlinePlayers() {
+    tell p "hi"
+}
+```
+
+要求右值实现可迭代语义。
+v0.1 支持：
+
+* `List<T>`
+* `Set<T>`
+* `Map<K, V>`（迭代元素为键值对或宿主定义 Pair）
+* 宿主声明可迭代对象
+
+## 16.5 break / continue
+
+仅在循环内部合法。
+
+## 16.6 defer
+
+```yuz
+fn f() {
+    defer log info "done"
+    ...
+}
+```
+
+语义：
+
+* 在当前函数或当前事件处理器退出前逆序执行
+* `return`、错误退出、正常退出均应触发
+* `defer` 语句不得跨线程迁移未定义上下文
+
+---
+
+# 17. 函数
+
+## 17.1 函数声明
+
+```yuz
+fn greet(p: Player) {
+    tell p "hello"
+}
+```
+
+完整形式：
+
+```yuz
+fn reward(level: Int, vip: Bool = false) -> Int {
+    ...
+}
+```
+
+## 17.2 参数
+
+每个参数包括：
+
+* 名称
+* 类型
+* 可选默认值
+
+默认值必须是编译期可验证、且不依赖调用上下文副作用的表达式。
+
+## 17.3 返回类型
+
+推荐所有函数显式声明返回类型。
+v0.1 建议规则：
+
+* 非 `Unit` 函数必须显式声明返回类型
+* 无返回值函数省略 `-> Unit`
+
+## 17.4 返回语句
+
+```yuz
+return
+return 42
+```
+
+规则：
+
+* `Unit` 函数可 `return` 或省略
+* 非 `Unit` 函数所有控制路径必须返回值
+
+## 17.5 递归
+
+允许直接递归与间接递归。
+递归函数必须显式返回类型。
+
+## 17.6 顶层函数与方法风格调用
+
+函数可为顶层函数。
+宿主可扩展“方法语法糖”，例如：
+
+```yuz
+player.hasPermission("x")
+```
+
+实际映射为宿主函数调用。
+
+---
+
+# 18. 记录、枚举、特质与实现
+
+## 18.1 record
+
+```yuz
+record Reward {
+    id: String
+    amount: Int
+}
+```
+
+规则：
+
+* 字段必须命名且有类型
+* 默认公开于模块内部；是否导出取决于顶层 `export`
+* record 是值语义结构
+
+自动提供：
+
+* 构造函数
+* 字段访问
+* 相等比较
+* `toString`
+* 宿主可选序列化支持
+
+构造示例：
+
+```yuz
+let r = Reward(id: "daily", amount: 100)
+```
+
+## 18.2 enum
+
+```yuz
+enum Rank {
+    MEMBER
+    VIP
+    ADMIN
+}
+```
+
+规则：
+
+* 枚举成员唯一
+* 可用于 `match`
+* 枚举值可比较相等
+
+v0.1 枚举不支持携带数据；后续可扩展代数数据类型。
+
+## 18.3 trait
+
+```yuz
+trait Formatter {
+    fn format() -> String
+}
+```
+
+trait 仅描述接口约定。
+
+## 18.4 impl
+
+```yuz
+impl Formatter for Reward {
+    fn format() -> String = "{id}:{amount}"
+}
+```
+
+规则：
+
+* 目标类型必须存在
+* trait 必须存在
+* 所有 trait 成员必须实现
+* 不允许重叠 impl 冲突
+
+## 18.5 方法解析
+
+在实现 trait 后，可通过方法风格访问：
+
+```yuz
+r.format()
+```
+
+若多个方法候选冲突，编译错误。
+
+---
+
+# 19. 模式匹配
+
+## 19.1 基本 match
+
+```yuz
+match x {
+    case 1 => ...
+    case 2 => ...
+    else => ...
+}
+```
+
+## 19.2 enum 匹配
+
+```yuz
+match rank {
+    case Rank.MEMBER => ...
+    case Rank.VIP => ...
+    case Rank.ADMIN => ...
+}
+```
+
+对 enum 应支持穷尽性检查。
+
+## 19.3 Result 匹配
+
+```yuz
+match findHome("base") {
+    case ok(loc) => teleport player to loc
+    case err(msg) => tell player msg
+}
+```
+
+## 19.4 Option 匹配
+
+```yuz
+match maybePlayer {
+    case some(p) => tell p "hi"
+    case none => log warn "offline"
+}
+```
+
+`some` 与 `none` 为模式关键字；若实现选择不用此语法，可由宿主文档化替代形式，但推荐保留。
+
+## 19.5 类型模式
+
+```yuz
+match victim {
+    case p is Player => tell p "你受伤了"
+    else => {}
+}
+```
+
+此能力可选，但建议实现。
+
+---
+
+# 20. 错误处理
+
+## 20.1 Result
+
+`Result<T, E>` 是标准错误建模方式。
+
+构造：
+
+```yuz
+ok(value)
+err(reason)
+```
+
+## 20.2 早退传播
+
+支持 `?` 操作符：
+
+```yuz
+let loc = findHome("base")?
+teleport player to loc
+```
+
+规则：
+
+* `expr?` 要求 `expr` 类型为 `Result<T, E>`
+* 当前函数返回类型必须兼容 `Result<U, E2>`
+* 若 `expr` 为 `err(e)`，当前函数立即返回 `err(e)` 或可转换的错误值
+* 若为 `ok(v)`，结果为 `v`
+
+## 20.3 可空/Option 的处理
+
+v0.1 中 `?` **仅用于 `Result`**，不用于可空传播。
+避免与空安全语义混淆。
+
+## 20.4 panic / fatal
+
+yuz 层不暴露通用 panic 机制。
+运行时致命错误由宿主转为模块错误、事件错误或 REPL 错误。
+
+---
+
+# 21. 事件系统
+
+这是 yuz 的核心。
+
+## 21.1 事件声明
+
+```yuz
+on player join {
+    tell player "欢迎"
+}
+```
+
+## 21.2 事件名称
+
+事件名是由一个或多个标识符组成的宿主事件路径，例如：
+
+* `player join`
+* `player chat`
+* `block break`
+* `entity damage`
+* `inventory click`
+
+事件路径解析由宿主注册表定义。
+
+## 21.3 事件上下文变量
+
+事件处理器内部自动注入上下文变量。示例：
+
+### player join
+
+* `player: Player`
+
+### player chat
+
+* `player: Player`
+* `message: String`
+
+### block break
+
+* `player: Player`
+* `block: Block`
+
+### entity damage
+
+* `victim: Entity`
+* `damager: Entity?`
+* `damage: Double`
+* `cause: String` 或 enum
+
+具体映射由宿主事件桥定义。
+
+## 21.4 过滤条件
+
+```yuz
+on block break where block.type == "DIAMOND_ORE" {
+    ...
+}
+```
+
+`where` 条件必须为 `Bool`。
+编译器应尽量将其编译为高效谓词。
+
+## 21.5 优先级
+
+```yuz
+on player chat priority high {
+    ...
+}
+```
+
+合法值由宿主定义，推荐：
+
+* `lowest`
+* `low`
+* `normal`
+* `high`
+* `highest`
+* `monitor`
+
+## 21.6 ignoreCancelled
+
+```yuz
+on inventory click ignoreCancelled true {
+    ...
+}
+```
+
+仅对可取消事件有效。
+不可取消事件上使用应报错或警告。
+
+## 21.7 throttle
+
+```yuz
+on player move throttle 5t {
+    ...
+}
+```
+
+表示同一处理器在指定时间窗口内限频触发。
+限频粒度由宿主定义，推荐以“事件源主体 + 处理器 id”为 key。
+
+## 21.8 生命周期事件
+
+保留以下宿主生命周期事件：
+
+* `on load`
+* `on enable`
+* `on disable`
+
+这些不是 Bukkit 原始事件，而是模块生命周期入口。
+
+---
+
+# 22. 命令系统
+
+## 22.1 命令声明
+
+```yuz
+command "/heal" permission "dynamicd.heal" {
+    exec by player {
+        set player.health = player.maxHealth
+    }
+}
+```
+
+## 22.2 参数命令
+
+```yuz
+command "/speed <target:player> <value:int>" permission "dynamicd.speed" {
+    exec by sender {
+        ...
+    }
+}
+```
+
+参数语法：
+
+```text
+<name:type>
+```
+
+支持宿主参数类型，例如：
+
+* `player`
+* `offline_player`
+* `int`
+* `double`
+* `string`
+* `greedy_string`
+* `world`
+
+## 22.3 执行上下文
+
+```yuz
+exec by player { ... }
+exec by sender { ... }
+exec by console { ... }
+```
+
+* `player`：要求执行者为玩家，否则命令解析失败
+* `console`：要求控制台
+* `sender`：任意命令发送者
+
+## 22.4 权限
+
+命令可带权限声明：
+
+```yuz
+permission "dynamicd.heal"
+```
+
+若未声明，默认由宿主决定是否公开。
+
+## 22.5 补全
+
+参数类型若可补全，宿主应自动补全。
+yuz v0.1 不定义自定义补全 DSL，但宿主可扩展。
+
+---
+
+# 23. 调度与时间
+
+## 23.1 every
+
+```yuz
+every 5s {
+    ...
+}
+```
+
+表示周期任务。
+
+## 23.2 after
+
+```yuz
+after 5s {
+    ...
+}
+```
+
+表示一次性延迟任务。
+
+## 23.3 later
+
+```yuz
+later 1t {
+    ...
+}
+```
+
+为 `after` 的 tick 友好别名；是否同时保留由实现决定，规范允许两者并存。
+
+## 23.4 调度上下文
+
+* 默认在主线程执行
+* 若放在 `async {}` 内创建子任务，继承 async 上下文，除非显式切回 `sync`
+
+## 23.5 取消
+
+周期任务在模块卸载时必须自动取消。
+宿主可提供任务句柄 API，但 v0.1 不强制语法级暴露。
+
+---
+
+# 24. 并发与线程语义
+
+## 24.1 线程类别
+
+yuz 逻辑运行在宿主线程模型上，v0.1 定义三个抽象类别：
+
+* `main`
+* `async`
+* `host-specific`
+
+Paper/Bukkit 核心操作通常要求 `main`。
+
+## 24.2 async 块
+
+```yuz
+async {
+    let data = http.get("...")
+    sync {
+        broadcast data.body
+    }
+}
+```
+
+规则：
+
+* `async` 内部禁止调用 `@mainOnly` API
+* `sync` 内部可回到主线程
+* 捕获变量必须满足线程安全规则
+
+## 24.3 sync 块
+
+仅在异步上下文或宿主允许的上下文中有效。
+用于显式切回主线程。
+
+## 24.4 效果检查
+
+宿主 API 必须声明效果标签，例如：
+
+* `@mainOnly`
+* `@asyncOnly`
+* `@pure`
+* `@blocking`
+* `@unsafe`
+* `@permission("...")`
+
+编译器应在调用点验证效果兼容性。
+
+---
+
+# 25. 持久化与状态存储
+
+## 25.1 persist 支持类型
+
+默认允许持久化的类型：
+
+* 基本值类型
+* `List<T>`
+* `Set<T>`
+* `Map<K, V>`
+* `record`
+* `enum`
+* 宿主声明可序列化的值对象
+
+不允许：
+
+* 原生事件对象
+* 活体宿主对象句柄
+* 线程对象
+* 未声明序列化的宿主引用
+
+## 25.2 序列化失败
+
+若持久化字段含不可序列化值：
+
+* 编译器能静态发现时：编译错误
+* 运行时才发现时：加载/保存失败并报告
+
+## 25.3 状态迁移
+
+模块升级导致 persist 结构变化时，宿主可支持迁移器。
+v0.1 规范不要求语法级迁移 DSL，但建议宿主提供。
+
+---
+
+# 26. 权限与宿主能力
+
+## 26.1 权限声明
+
+```yuz
+permission "dynamicd.heal" default op
+permission "dynamicd.vip.fly" default false
+```
+
+`default` 合法值由宿主定义，推荐：
+
+* `true`
+* `false`
+* `op`
+
+## 26.2 权限检查
+
+```yuz
+if player.hasPermission("dynamicd.heal") { ... }
+```
+
+或：
+
+```yuz
+if luckperms.has(player, "dynamicd.heal") { ... }
+```
+
+## 26.3 危险能力
+
+执行以下操作应视为危险能力：
+
+* 执行命令
+* 写权限系统
+* HTTP/外部 IO
+* 文件写入
+* 跨模块反射访问
+* agent 修改代码
+
+这些能力必须通过宿主授权。
+
+---
+
+# 27. 占位符与插件互操作
+
+## 27.1 placeholder 顶层声明
+
+```yuz
+placeholder "dynamicd_coins" {
+    param player: Player
+    return "100"
+}
+```
+
+或命名空间式：
+
+```yuz
+namespace "dd" {
+    placeholder "coins" for player {
+        return coins.getOrDefault(player.uuid, 0).toString()
+    }
+}
+```
+
+更推荐前文 DSL：
+
+```yuz
+papi namespace "dd" {
+    placeholder "coins" for player {
+        return ...
+    }
+}
+```
+
+这里 `papi` 视为宿主扩展顶层声明。
+
+## 27.2 插件发现
+
+```yuz
+if plugin("PlaceholderAPI").enabled {
+    ...
+}
+```
+
+`plugin(name)` 由宿主标准库提供。
+
+## 27.3 互操作边界
+
+yuz 不允许直接引用任意 Java 类。
+插件互操作必须通过：
+
+* 宿主桥接函数
+* 注册扩展类型
+* 特定插件适配器
+
+---
+
+# 28. REPL 语义
+
+## 28.1 REPL 单元
+
+REPL 输入可是一条表达式、一条语句或一个块。
+
+```text
+> 1 + 2
+3
+> let x = 5
+> x * 2
+10
+```
+
+## 28.2 顶层可见性
+
+REPL 会话可见：
+
+* 已加载模块的导出符号
+* 会话级变量
+* 宿主标准库
+
+## 28.3 状态
+
+REPL 会话持有独立符号环境。
+会话结束后局部变量销毁。
+
+## 28.4 安全
+
+REPL 默认受更严格权限控制。
+宿主可禁用某些能力，如：
+
+* `persist`
+* 模块级导出
+* 命令执行
+* 文件操作
+
+---
+
+# 29. 编译模型
+
+## 29.1 编译阶段
+
+编译必须至少包括：
+
+1. 词法分析
+2. 语法分析
+3. AST 构建
+4. 名称解析
+5. 类型检查
+6. 效果检查
+7. 常量折叠
+8. 事件/命令/权限注册表生成
+9. IR 或执行计划生成
+10. 编译产物写出
+
+## 29.2 编译产物
+
+建议扩展名：
+
+```text
+.dyc
+```
+
+内容包括：
+
+* 模块元数据
+* 类型表
+* 常量池
+* 符号表摘要
+* 事件绑定表
+* 指令流或执行计划
+* 调试信息
+
+## 29.3 增量编译
+
+允许只重编发生改动的模块及其依赖闭包。
+
+---
+
+# 30. 运行时模型
+
+## 30.1 执行单元
+
+运行时最小执行入口为：
+
+* 事件处理器
+* 命令处理器
+* 调度任务
+* REPL 单元
+* 导出函数调用
+
+## 30.2 模块生命周期
+
+* 准备
+* 加载
+* 启用
+* 运行
+* 禁用
+* 卸载
+
+## 30.3 卸载语义
+
+模块卸载时必须：
+
+* 取消其注册的任务
+* 解绑事件
+* 移除命令
+* 移除占位符
+* 运行必要清理与 `defer`
+* 决定是否保存持久态
+
+---
+
+# 31. 沙箱与安全限制
+
+## 31.1 禁止能力
+
+yuz v0.1 语义层面禁止：
+
+* 任意反射
+* 任意文件系统访问
+* 任意网络访问
+* 任意类加载
+* 任意系统命令执行
+* 任意线程创建
+* 任意 JVM 内存操作
+
+## 31.2 资源限制
+
+宿主应支持：
+
+* 单次执行最大步数
+* 单 tick 最大预算
+* 单模块最大任务数
+* REPL 超时
+* 日志限流
+
+## 31.3 运行时错误隔离
+
+单个模块错误不应导致整个宿主崩溃。
+宿主至少应做到：
+
+* 捕获模块异常
+* 标记错误来源模块
+* 记录事件/命令上下文
+* 可选择暂时禁用故障模块
+
+---
+
+# 32. 诊断与错误码
+
+编译器和运行时都应提供结构化诊断。
+
+## 32.1 诊断等级
+
+* `error`
+* `warning`
+* `info`
+
+## 32.2 编译错误示例分类
+
+* `E0001` 词法错误
+* `E0100` 语法错误
+* `E0200` 名称未解析
+* `E0300` 重复定义
+* `E0400` 类型不匹配
+* `E0401` 非空性违规
+* `E0500` 效果违规
+* `E0600` 非法控制流
+* `E0700` 事件上下文违规
+* `E0800` 持久化类型违规
+* `E0900` 宿主权限违规
+
+## 32.3 运行时错误分类
+
+* `R1000` 列表越界
+* `R1001` 缺失映射键
+* `R1002` 非法宿主调用
+* `R1003` 调度线程违规
+* `R1004` 序列化失败
+* `R1005` 模块加载失败
+
+每个诊断至少应包含：
+
+* 错误码
+* 文件/模块
+* 行列位置
+* 摘要
+* 上下文片段
+* 修复建议（若可推导）
+
+---
+
+# 33. 标准库总览
+
+以下仅定义命名与职责，不展开全部 API。
+
+## 33.1 `std.core`
+
+* `print`
+* `toString`
+* `toInt`
+* `toLong`
+* `toDouble`
+* `len`
+* `range`
+* `min`
+* `max`
+
+## 33.2 `std.collections`
+
+* `list()`
+* `map()`
+* `set()`
+* `listOf(...)`
+* `mapOf(...)`
+* `setOf(...)`
+* `contains`
+* `getOrDefault`
+
+## 33.3 `std.result`
+
+* `ok`
+* `err`
+* `isOk`
+* `isErr`
+* `unwrapOr`
+* `mapResult`
+
+## 33.4 `std.option`
+
+* `some`
+* `none`
+* `isSome`
+* `isNone`
+* `unwrapOr`
+
+## 33.5 `std.server`
+
+* `broadcast`
+* `onlinePlayers`
+* `server.name`
+* `server.onlineCount`
+
+## 33.6 `std.player`
+
+* `findPlayer`
+* `player.name`
+* `player.uuid`
+* `player.health`
+* `teleport`
+* `kick`
+* `give`
+
+## 33.7 `std.chat`
+
+* `tell`
+* `title`
+* `actionbar`
+* `sound`
+
+## 33.8 `std.world`
+
+* `world(name)`
+* `spawnEntity`
+* `strikeLightning`
+
+## 33.9 `std.task`
+
+* `every`
+* `after`
+* `later`
+* `async`
+* `sync`
+
+## 33.10 `std.command`
+
+* `run console command`
+* `run player command`
+* `run capture console command`
+
+## 33.11 `std.data`
+
+* `json.encode`
+* `json.decode`
+* `persist` helpers
+* `cache`
+
+## 33.12 `std.perms`
+
+* `hasPermission`
+* `permission`
+* `luckperms.*`（若集成存在）
+
+---
+
+# 34. 语法（EBNF）
+
+下面给出 v0.1 的核心 EBNF。
+为保持可读性，省略部分低层细节，但足够作为 parser 起点。
+
+## 34.1 词法层简化
+
+```ebnf
+identifier      = letter , { letter | digit | "_" } ;
+string_literal  = '"' , { string_char } , '"' ;
+int_literal     = digit , { digit | "_" } ;
+float_literal   = digit , { digit | "_" } , "." , digit , { digit | "_" } , [ "f" ] ;
+bool_literal    = "true" | "false" ;
+null_literal    = "null" ;
+duration_literal= int_literal , ( "t" | "s" | "m" | "h" | "d" ) ;
+```
+
+## 34.2 程序
+
+```ebnf
+program         = { top_decl } ;
+```
+
+## 34.3 顶层声明
+
+```ebnf
+top_decl        =
+      module_decl
+    | version_decl
+    | use_decl
+    | export_decl
+    | const_decl
+    | state_decl
+    | persist_decl
+    | fn_decl
+    | record_decl
+    | enum_decl
+    | trait_decl
+    | impl_decl
+    | event_decl
+    | timer_decl
+    | command_decl
+    | permission_decl
+    | placeholder_decl
+    ;
+```
+
+## 34.4 模块与导入
+
+```ebnf
+module_decl     = "module" , string_literal ;
+version_decl    = "version" , string_literal ;
+
+use_decl        = "use" , import_path ;
+import_path     = identifier , { "." , identifier } , [ "." , "*" ]
+                | identifier , { "." , identifier } , "as" , identifier ;
+```
+
+## 34.5 导出
+
+```ebnf
+export_decl     = "export" , exportable_decl ;
+exportable_decl = fn_decl | record_decl | enum_decl | trait_decl | const_decl ;
+```
+
+## 34.6 常量与状态
+
+```ebnf
+const_decl      = "const" , identifier , [ ":" , type ] , "=" , expr ;
+state_decl      = "state" , identifier , ":" , type , "=" , expr ;
+persist_decl    = "persist" , identifier , ":" , type , "=" , expr ;
+```
+
+## 34.7 函数
+
+```ebnf
+fn_decl         = "fn" , identifier , "(" , [ param_list ] , ")" ,
+                  [ "->" , type ] ,
+                  ( block | "=" , expr ) ;
+
+param_list      = param , { "," , param } ;
+param           = identifier , ":" , type , [ "=" , expr ] ;
+```
+
+## 34.8 类型
+
+```ebnf
+type            = simple_type , [ "?" ] ;
+simple_type     = identifier , [ generic_args ] ;
+generic_args    = "<" , type , { "," , type } , ">" ;
+```
+
+## 34.9 记录、枚举、特质、实现
+
+```ebnf
+record_decl     = "record" , identifier , "{" , { field_decl } , "}" ;
+field_decl      = identifier , ":" , type ;
+
+enum_decl       = "enum" , identifier , "{" , enum_item , { "," , enum_item } , "}" ;
+enum_item       = identifier ;
+
+trait_decl      = "trait" , identifier , "{" , { trait_member } , "}" ;
+trait_member    = "fn" , identifier , "(" , [ param_list ] , ")" , [ "->" , type ] ;
+
+impl_decl       = "impl" , identifier , "for" , identifier , "{" , { fn_decl } , "}" ;
+```
+
+这里 `impl Formatter for Reward` 中第一个 `identifier` 是 trait，第二个是类型。
+
+## 34.10 事件
+
+```ebnf
+event_decl      = "on" , event_path ,
+                  [ "where" , expr ] ,
+                  [ "priority" , identifier ] ,
+                  [ "ignoreCancelled" , bool_literal ] ,
+                  [ "throttle" , duration_literal ] ,
+                  block ;
+
+event_path      = identifier , { identifier } ;
+```
+
+## 34.11 定时器
+
+```ebnf
+timer_decl      =
+      "every" , duration_literal , block
+    | "after" , duration_literal , block
+    | "later" , duration_literal , block
+    ;
+```
+
+## 34.12 命令
+
+```ebnf
+command_decl    = "command" , string_literal ,
+                  [ "permission" , string_literal ] ,
+                  block ;
+
+permission_decl = "permission" , string_literal , [ "default" , permission_default ] ;
+permission_default = "true" | "false" | "op" ;
+```
+
+## 34.13 占位符
+
+```ebnf
+placeholder_decl = "placeholder" , string_literal , block ;
+```
+
+宿主扩展如 `papi namespace` 不在核心 EBNF 中，作为扩展语法注册。
+
+## 34.14 块与语句
+
+```ebnf
+block           = "{" , { stmt } , "}" ;
+
+stmt            =
+      let_stmt
+    | var_stmt
+    | assign_stmt
+    | expr_stmt
+    | if_stmt
+    | match_stmt
+    | guard_stmt
+    | for_stmt
+    | while_stmt
+    | break_stmt
+    | continue_stmt
+    | return_stmt
+    | defer_stmt
+    | cancel_stmt
+    | block
+    ;
+```
+
+## 34.15 基本语句
+
+```ebnf
+let_stmt        = "let" , identifier , [ ":" , type ] , "=" , expr ;
+var_stmt        = "var" , identifier , [ ":" , type ] , "=" , expr ;
+
+assign_stmt     = lvalue , "=" , expr ;
+lvalue          = identifier | member_expr | index_expr ;
+
+expr_stmt       = expr ;
+
+break_stmt      = "break" ;
+continue_stmt   = "continue" ;
+return_stmt     = "return" , [ expr ] ;
+defer_stmt      = "defer" , stmt ;
+cancel_stmt     = "cancel" , bool_literal ;
+```
+
+## 34.16 控制流语句
+
+```ebnf
+if_stmt         = "if" , expr , block ,
+                  { "else" , "if" , expr , block } ,
+                  [ "else" , block ] ;
+
+guard_stmt      = "guard" , expr , "else" , block ;
+
+for_stmt        = "for" , identifier , "in" , expr , block ;
+while_stmt      = "while" , expr , block ;
+```
+
+## 34.17 match
+
+```ebnf
+match_stmt      = "match" , expr , "{" , { match_arm } , [ else_arm ] , "}" ;
+match_arm       = "case" , pattern , "=>" , ( expr | block ) ;
+else_arm        = "else" , "=>" , ( expr | block ) ;
+```
+
+## 34.18 模式
+
+```ebnf
+pattern         =
+      literal_pattern
+    | enum_pattern
+    | ok_pattern
+    | err_pattern
+    | some_pattern
+    | none_pattern
+    | type_pattern
+    | identifier_pattern
+    ;
+
+literal_pattern = literal ;
+enum_pattern    = identifier , "." , identifier ;
+ok_pattern      = "ok" , "(" , identifier , ")" ;
+err_pattern     = "err" , "(" , identifier , ")" ;
+some_pattern    = "some" , "(" , identifier , ")" ;
+none_pattern    = "none" ;
+type_pattern    = identifier , "is" , identifier ;
+identifier_pattern = identifier ;
+```
+
+## 34.19 表达式
+
+```ebnf
+expr            = logical_or ;
+
+logical_or      = logical_and , { "or" , logical_and } ;
+logical_and     = equality , { "and" , equality } ;
+equality        = comparison , { ( "==" | "!=" ) , comparison } ;
+comparison      = additive , { ( "<" | "<=" | ">" | ">=" | "is" ) , additive } ;
+additive        = multiplicative , { ( "+" | "-" ) , multiplicative } ;
+multiplicative  = unary , { ( "*" | "/" | "%" ) , unary } ;
+unary           = [ "not" | "-" ] , postfix ;
+
+postfix         = primary , { postfix_op } ;
+postfix_op      =
+      "." , identifier
+    | "(" , [ arg_list ] , ")"
+    | "[" , expr , "]"
+    | "?"
+    ;
+
+primary         =
+      literal
+    | identifier
+    | "(" , expr , ")"
+    | list_literal
+    | map_literal
+    | if_expr
+    | match_expr
+    | construct_expr
+    ;
+```
+
+## 34.20 参数与字面量
+
+```ebnf
+arg_list        = arg , { "," , arg } ;
+arg             = [ identifier , ":" ] , expr ;
+
+literal         =
+      int_literal
+    | float_literal
+    | string_literal
+    | bool_literal
+    | null_literal
+    | duration_literal
+    ;
+
+list_literal    = "[" , [ expr , { "," , expr } ] , "]" ;
+map_literal     = "{" , [ map_entry , { "," , map_entry } ] , "}" ;
+map_entry       = expr , ":" , expr ;
+construct_expr  = identifier , "(" , [ arg_list ] , ")" ;
+```
+
+---
+
+# 35. 示例
+
+## 35.1 最小模块
+
+```yuz
+module "dynamicd:hello"
+version "1.0.0"
+
+use std.chat.*
+
+on player join {
+    tell player "&a欢迎来到服务器"
+}
+```
+
+## 35.2 带状态和命令
+
+```yuz
+module "dynamicd:coins"
+
+use std.chat.*
+use std.player.*
+use std.collections.*
+
+persist coins: Map<Uuid, Int> = map()
+
+fn addCoins(p: Player, amount: Int) {
+    coins[p.uuid] = coins.getOrDefault(p.uuid, 0) + amount
+}
+
+command "/coins" permission "dynamicd.coins" {
+    exec by player {
+        tell player "&6金币: {coins.getOrDefault(player.uuid, 0)}"
+    }
+}
+```
+
+## 35.3 guard 与 Result
+
+```yuz
+fn findTarget(name: String) -> Result<Player, String> {
+    let p = findPlayer(name)
+    guard p != null else {
+        return err("玩家不在线")
+    }
+    return ok(p)
+}
+
+command "/heal <name:string>" permission "dynamicd.heal.other" {
+    exec by sender {
+        let p = findTarget(name)?
+        p.health = p.maxHealth
+        tell sender "&a已治疗 {p.name}"
+    }
+}
+```
+
+## 35.4 定时器与线程切换
+
+```yuz
+every 10s {
+    async {
+        let stats = http.get("https://example.com/stats")
+        sync {
+            broadcast "&7统计更新: {stats.body}"
+        }
+    }
+}
+```
+
+## 35.5 trait 与 impl
+
+```yuz
+record Reward {
+    id: String
+    amount: Int
+}
+
+trait Formatter {
+    fn format() -> String
+}
+
+impl Formatter for Reward {
+    fn format() -> String = "{id}:{amount}"
+}
+```
+
+---
+
+# 36. 实现建议
+
+这是规范附带的“工程落地建议”。
+
+## 36.1 parser 策略
+
+推荐：
+
+* 手写递归下降 parser
+* Pratt parser 处理表达式优先级
+
+
+
+## 36.2 类型检查策略
+
+推荐分三阶段：
+
+1. 顶层符号预收集
+2. 类型骨架建立
+3. 函数体与事件体类型检查
+
+这样可支持前向引用和递归。
+
+## 36.3 IR 设计
+
+推荐 IR 为：
+
+* 显式基本块
+* 显式局部槽位
+* 显式效果标签
+* 宿主调用作为受控指令节点
+
+不要一开始就直接生成 JVM 字节码，先做可调试 IR/VM 更稳。
+
+## 36.4 运行时对象模型
+
+建议：
+
+* `record` 生成轻量不可变值对象
+* `state/persist` 存在模块实例对象中
+* 事件上下文为只读绑定环境
+* 命令参数解析结果进入局部环境
+
+## 36.5 诊断体验
+
+错误信息要做到：
+
+* 指出位置
+* 指出期望/实际类型
+* 给修复建议
+* 给上下文片段
+
+示例：
+
+```text
+[E0401] 非空性违规
+modules/welcome/listeners.yuz:17:10
+
+不能将 null 赋值给类型 Player
+
+建议:
+- 将类型改为 Player?
+- 或在赋值前使用 guard 检查
+```

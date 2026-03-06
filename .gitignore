@@ -1,0 +1,13 @@
+.gradle/
+build/
+out/
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Runtime data
+plugins/
