@@ -229,6 +229,23 @@ class CompilerFacadeTest {
     }
 
     @Test
+    fun `fails when unwrapping non-result function call`() {
+        val dir = Files.createTempDirectory("dynamicd-mod").toFile()
+        File(dir, "mod.yuz").writeText(
+            """
+            module "dynamicd:welcome"
+            fn plain() -> Int { }
+            fn test() {
+              let x = plain()?
+            }
+            """.trimIndent(),
+        )
+        val result = CompilerFacade.compileModule("welcome", dir)
+        assertFalse(result.success)
+        assertTrue(result.diagnostics.any { it.code == "E0704" })
+    }
+
+    @Test
     fun `match without else emits warning`() {
         val dir = Files.createTempDirectory("dynamicd-mod").toFile()
         File(dir, "mod.yuz").writeText(
@@ -273,6 +290,24 @@ class CompilerFacadeTest {
             let queryResult: Result<Int, String> = ok(1)
             match queryResult {
               case ok(value) => tell player "ok"
+            }
+            """.trimIndent(),
+        )
+        val result = CompilerFacade.compileModule("welcome", dir)
+        assertFalse(result.success)
+        assertTrue(result.diagnostics.any { it.code == "E0703" })
+    }
+
+    @Test
+    fun `result match on function parameter requires both branches`() {
+        val dir = Files.createTempDirectory("dynamicd-mod").toFile()
+        File(dir, "mod.yuz").writeText(
+            """
+            module "dynamicd:welcome"
+            fn handle(input: Result<Int, String>) {
+              match input {
+                case ok(v) => tell player "ok"
+              }
             }
             """.trimIndent(),
         )

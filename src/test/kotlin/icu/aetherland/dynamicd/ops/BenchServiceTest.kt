@@ -91,5 +91,12 @@ class BenchServiceTest {
         assertNotNull(latestSuite)
         assertEquals(1, latestSuite.moduleCount)
         assertEquals(BenchScenario.MIXED, latestSuite.scenario)
+
+        val out = File(root, "data/bench/report.md")
+        assertTrue(service.exportMarkdown(out))
+        assertTrue(out.exists())
+        val text = out.readText()
+        assertTrue(text.contains("DynamicD Bench Report"))
+        assertTrue(text.contains("verdict"))
     }
 }

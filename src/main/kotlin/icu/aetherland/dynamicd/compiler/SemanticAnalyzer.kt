@@ -9,7 +9,7 @@ object SemanticAnalyzer {
         diagnostics += checkDuplicateDeclarations(file, source, ast)
         diagnostics += checkImplBindings(file, ast)
         diagnostics += checkMatchCoverage(file, source, ast)
-        diagnostics += checkResultFlow(file, source)
+        diagnostics += checkResultFlow(file, source, ast)
         diagnostics += checkNullableGuards(file, source)
         diagnostics += checkAsyncEffects(file, source)
         return diagnostics
@@ -208,6 +208,7 @@ object SemanticAnalyzer {
         val enumMap = ast.declarations.filterIsInstance<EnumDeclaration>().associateBy { it.name }
         val inferredTypeMap = inferLocalTypes(source, ast)
         val resultVars = inferredTypeMap.filterValues { normalizeType(it).startsWith("Result<") }.keys
+        val optionVars = inferredTypeMap.filterValues { normalizeType(it).startsWith("Option<") }.keys
         ast.declarations.filterIsInstance<MatchDeclaration>().forEach { decl ->
             if (!decl.hasElseBranch && decl.caseCount == 0) {
                 diagnostics += Diagnostic(
@@ -273,13 +274,36 @@ object SemanticAnalyzer {
                     )
                 }
             }
+
+            val optionCaseSet = decl.caseLabels.map { it.substringBefore("(").lowercase() }.toSet()
+            val targetLooksOption = decl.targetExpression in optionVars
+            if (!decl.hasElseBranch && (targetLooksOption || "some" in optionCaseSet || "none" in optionCaseSet)) {
+                if (!optionCaseSet.containsAll(setOf("some", "none"))) {
+                    diagnostics += Diagnostic(
+                        code = "E0705",
+                        level = DiagnosticLevel.ERROR,
+                        stage = DiagnosticStage.TYPE,
+                        message = "Option match must cover both some and none branches or include else",
+                        file = file.name,
+                        line = 1,
+                        column = 1,
+                        expected = "some + none",
+                        actual = optionCaseSet.joinToString(","),
+                        suggestion = "Add missing branch or else",
+                    )
+                }
+            }
         }
         return diagnostics
     }
 
-    private fun checkResultFlow(file: File, source: String): List<Diagnostic> {
+    private fun checkResultFlow(file: File, source: String, ast: AstModule): List<Diagnostic> {
         val diagnostics = mutableListOf<Diagnostic>()
         val lines = source.lines()
+        val inferredTypes = inferLocalTypes(source, ast)
+        val fnReturnMap = ast.declarations
+            .filterIsInstance<FunctionDeclaration>()
+            .associate { it.name to normalizeType(it.signature.returnType ?: "") }
         var inResultFn = false
         var fnDepth = 0
         lines.forEachIndexed { idx, raw ->
@@ -309,6 +333,44 @@ object SemanticAnalyzer {
                     contextSnippet = raw,
                 )
             }
+            val unwrapVar = extractUnwrapVariable(line)
+            if (unwrapVar != null) {
+                val t = inferredTypes[unwrapVar]?.let(::normalizeType)
+                if (t != null && !t.startsWith("Result<")) {
+                    diagnostics += Diagnostic(
+                        code = "E0704",
+                        level = DiagnosticLevel.ERROR,
+                        stage = DiagnosticStage.TYPE,
+                        message = "`?` unwrap target is not Result type",
+                        file = file.name,
+                        line = idx + 1,
+                        column = line.indexOf('?') + 1,
+                        expected = "Result<T,E>",
+                        actual = t,
+                        suggestion = "Use Result-typed value or handle explicitly",
+                        contextSnippet = raw,
+                    )
+                }
+            }
+            val unwrapCall = extractUnwrapFunctionCall(line)
+            if (unwrapCall != null) {
+                val returnType = fnReturnMap[unwrapCall]
+                if (returnType != null && !returnType.startsWith("Result<")) {
+                    diagnostics += Diagnostic(
+                        code = "E0704",
+                        level = DiagnosticLevel.ERROR,
+                        stage = DiagnosticStage.TYPE,
+                        message = "Function `$unwrapCall` does not return Result but is unwrapped with `?`",
+                        file = file.name,
+                        line = idx + 1,
+                        column = line.indexOf('?') + 1,
+                        expected = "Result<T,E>",
+                        actual = returnType.ifBlank { "unknown" },
+                        suggestion = "Change function return type or remove `?`",
+                        contextSnippet = raw,
+                    )
+                }
+            }
             if (Regex("\\breturn\\s+(ok|err)\\s*\\(").containsMatchIn(line) && !inResultFn) {
                 diagnostics += Diagnostic(
                     code = "E0702",
@@ -332,6 +394,21 @@ object SemanticAnalyzer {
         val noComment = line.substringBefore("//")
         if (noComment.isBlank()) return false
         return Regex("\\)\\s*\\?$|\\b\\w+\\s*\\?$").containsMatchIn(noComment.trim())
+    }
+
+    private fun extractUnwrapVariable(line: String): String? {
+        val noComment = line.substringBefore("//").trim()
+        if (noComment.isBlank()) return null
+        val m = Regex("\\b(\\w+)\\s*\\?$").find(noComment) ?: return null
+        if (Regex("\\b\\w+\\s*\\(.*\\)\\s*\\?$").containsMatchIn(noComment)) return null
+        return m.groupValues[1]
+    }
+
+    private fun extractUnwrapFunctionCall(line: String): String? {
+        val noComment = line.substringBefore("//").trim()
+        if (noComment.isBlank()) return null
+        val m = Regex("\\b(\\w+)\\s*\\([^)]*\\)\\s*\\?$").find(noComment) ?: return null
+        return m.groupValues[1]
     }
 
     private fun inferLocalTypes(source: String, ast: AstModule): Map<String, String> {

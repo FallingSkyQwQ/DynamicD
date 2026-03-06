@@ -333,7 +333,7 @@ class DynamicDCommand(
 
     private fun handleBench(sender: CommandSender, args: List<String>): Boolean {
         if (args.isEmpty()) {
-            sender.sendMessage("Usage: /dd bench <run|report>")
+            sender.sendMessage("Usage: /dd bench <run|report|suite|export>")
             return true
         }
         return when (args[0].lowercase()) {
@@ -406,8 +406,19 @@ class DynamicDCommand(
                 )
                 true
             }
+            "export" -> {
+                val relative = args.getOrNull(1) ?: "data/bench/report.md"
+                val out = if (relative.contains(":") || relative.startsWith("/") || relative.startsWith("\\")) {
+                    java.io.File(relative)
+                } else {
+                    java.io.File(relative)
+                }
+                val ok = benchService.exportMarkdown(out)
+                sender.sendMessage(if (ok) "bench export => ${out.path}" else "bench export failed: no reports")
+                true
+            }
             else -> {
-                sender.sendMessage("Usage: /dd bench <run|report>")
+                sender.sendMessage("Usage: /dd bench <run|report|suite|export>")
                 true
             }
         }
@@ -495,7 +506,7 @@ class DynamicDCommand(
             return mutableListOf("sync").filter { it.startsWith(args[1], ignoreCase = true) }.toMutableList()
         }
         if (args.size == 2 && args[0].equals("bench", ignoreCase = true)) {
-            return mutableListOf("run", "report", "suite")
+            return mutableListOf("run", "report", "suite", "export")
                 .filter { it.startsWith(args[1], ignoreCase = true) }
                 .toMutableList()
         }

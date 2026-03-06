@@ -4,6 +4,7 @@ import icu.aetherland.dynamicd.agent.AgentToolchain
 import icu.aetherland.dynamicd.agent.loop.AgentRuntimeStats
 import icu.aetherland.dynamicd.module.ModuleManager
 import java.io.File
+import java.time.Instant
 import kotlin.math.max
 
 enum class BenchScenario {
@@ -321,6 +322,52 @@ class BenchService(
             avgReloadSuccessTrendDelta = avgReloadSuccessTrendDelta,
             verdict = verdict,
         )
+    }
+
+    fun exportMarkdown(targetFile: File): Boolean {
+        val latestSingle = latest()
+        val latestSuite = latestSuite()
+        if (latestSingle == null && latestSuite == null) {
+            return false
+        }
+        targetFile.parentFile?.mkdirs()
+        val content = buildString {
+            appendLine("# DynamicD Bench Report")
+            appendLine()
+            appendLine("GeneratedAt=${Instant.now()}")
+            appendLine()
+            if (latestSingle != null) {
+                appendLine("## Module Report")
+                appendLine("- module: ${latestSingle.moduleId}")
+                appendLine("- scenario: ${latestSingle.scenario}")
+                appendLine("- iterations: ${latestSingle.iterations}")
+                appendLine("- compile: cold=${latestSingle.compileColdMs}ms warmAvg=${latestSingle.compileWarmAvgMs}ms")
+                appendLine("- reload: avg=${latestSingle.reloadAvgMs}ms p95=${latestSingle.reloadP95Ms}ms p99=${latestSingle.reloadP99Ms}ms")
+                appendLine("- reliability: successRate=${latestSingle.reloadSuccessRate} trendDelta=${latestSingle.reloadSuccessTrendDelta} failures=${latestSingle.failureCount}")
+                appendLine("- throughput: eventsPerSec=${latestSingle.eventThroughputPerSec} agentSuccessRate=${latestSingle.agentSuccessRate}")
+                appendLine("- soak: samples=${latestSingle.soakSamples} start/mid/end=${latestSingle.soakStartReloadMs}/${latestSingle.soakMidReloadMs}/${latestSingle.soakEndReloadMs}")
+                appendLine("- verdict: ${latestSingle.verdict}")
+                appendLine()
+            }
+            if (latestSuite != null) {
+                appendLine("## Suite Report")
+                appendLine("- scenario: ${latestSuite.scenario}")
+                appendLine("- iterations: ${latestSuite.iterations}")
+                appendLine("- modules: ${latestSuite.moduleCount}")
+                appendLine("- compileWarmAvg: ${latestSuite.avgCompileWarmMs}ms")
+                appendLine("- reloadAvg: ${latestSuite.avgReloadMs}ms")
+                appendLine("- reloadP95/P99: ${latestSuite.avgReloadP95Ms}/${latestSuite.avgReloadP99Ms}ms")
+                appendLine("- reloadSuccessRate: ${latestSuite.avgReloadSuccessRate}")
+                appendLine("- trendDelta: ${latestSuite.avgReloadSuccessTrendDelta}")
+                appendLine("- eventThroughputPerSec: ${latestSuite.avgEventThroughputPerSec}")
+                appendLine("- failedModuleCount: ${latestSuite.failedModuleCount}")
+                appendLine("- failedModules: ${if (latestSuite.failedModules.isEmpty()) "none" else latestSuite.failedModules.joinToString(",")}")
+                appendLine("- failureBuckets: ${if (latestSuite.failureBuckets.isEmpty()) "none" else latestSuite.failureBuckets}")
+                appendLine("- verdict: ${latestSuite.verdict}")
+            }
+        }
+        targetFile.writeText(content)
+        return true
     }
 
     private fun write(report: BenchReport) {
