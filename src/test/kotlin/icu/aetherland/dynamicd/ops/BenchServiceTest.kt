@@ -98,5 +98,8 @@ class BenchServiceTest {
         val text = out.readText()
         assertTrue(text.contains("DynamicD Bench Report"))
         assertTrue(text.contains("verdict"))
+        assertTrue(text.contains("Go/No-Go Decision"))
+        assertTrue(text.contains("decision:"))
+        assertTrue(text.contains("gate: reloadSuccessRate>=0.99, p99<=250ms, failureCount=0 => PASS"))
     }
 }

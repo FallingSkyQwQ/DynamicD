@@ -413,6 +413,9 @@ object SemanticAnalyzer {
 
     private fun inferLocalTypes(source: String, ast: AstModule): Map<String, String> {
         val knownEnums = ast.declarations.filterIsInstance<EnumDeclaration>().map { it.name }.toSet()
+        val fnReturnMap = ast.declarations
+            .filterIsInstance<FunctionDeclaration>()
+            .associate { it.name to normalizeType(it.signature.returnType ?: "") }
         val result = mutableMapOf<String, String>()
         source.lines().forEach { raw ->
             val line = raw.trim()
@@ -434,6 +437,16 @@ object SemanticAnalyzer {
                 val enumType = enumCtor.groupValues[3]
                 if (enumType in knownEnums) {
                     result[enumCtor.groupValues[2]] = enumType
+                }
+                return@forEach
+            }
+            val fnCallAssign = Regex("(let|var)\\s+(\\w+)\\s*=\\s*(\\w+)\\s*\\(").find(line)
+            if (fnCallAssign != null) {
+                val target = fnCallAssign.groupValues[2]
+                val fn = fnCallAssign.groupValues[3]
+                val returnType = fnReturnMap[fn]
+                if (!returnType.isNullOrBlank()) {
+                    result[target] = returnType
                 }
             }
             val fnParams = Regex("fn\\s+\\w+\\s*\\(([^)]*)\\)").find(line)?.groupValues?.getOrNull(1)

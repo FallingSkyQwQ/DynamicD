@@ -365,6 +365,17 @@ class BenchService(
                 appendLine("- failureBuckets: ${if (latestSuite.failureBuckets.isEmpty()) "none" else latestSuite.failureBuckets}")
                 appendLine("- verdict: ${latestSuite.verdict}")
             }
+            appendLine()
+            appendLine("## Go/No-Go Decision")
+            val finalVerdict = when {
+                latestSuite?.verdict == "FAIL" || latestSingle?.verdict == "FAIL" -> "NO_GO"
+                latestSuite?.verdict == "WARN" || latestSingle?.verdict == "WARN" -> "GO_WITH_RISK"
+                latestSuite?.verdict == "PASS" || latestSingle?.verdict == "PASS" -> "GO"
+                else -> "NO_DATA"
+            }
+            appendLine("- decision: $finalVerdict")
+            appendLine("- gate: reloadSuccessRate>=0.99, p99<=250ms, failureCount=0 => PASS")
+            appendLine("- note: WARN/FAIL requires rollback readiness and mitigation checklist before production cutover")
         }
         targetFile.writeText(content)
         return true

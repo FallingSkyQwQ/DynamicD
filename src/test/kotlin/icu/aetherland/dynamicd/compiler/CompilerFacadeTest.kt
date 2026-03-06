@@ -246,6 +246,24 @@ class CompilerFacadeTest {
     }
 
     @Test
+    fun `fails when unwrapping inferred non-result variable inside result function`() {
+        val dir = Files.createTempDirectory("dynamicd-mod").toFile()
+        File(dir, "mod.yuz").writeText(
+            """
+            module "dynamicd:welcome"
+            fn plain() -> Int { }
+            fn test() -> Result<Int, String> {
+              let value = plain()
+              let x = value?
+            }
+            """.trimIndent(),
+        )
+        val result = CompilerFacade.compileModule("welcome", dir)
+        assertFalse(result.success)
+        assertTrue(result.diagnostics.any { it.code == "E0704" })
+    }
+
+    @Test
     fun `match without else emits warning`() {
         val dir = Files.createTempDirectory("dynamicd-mod").toFile()
         File(dir, "mod.yuz").writeText(
