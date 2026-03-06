@@ -99,7 +99,7 @@ object Parser {
                     val m = Regex("(export\\s+)?fn\\s+(\\w+)\\s*\\(").find(line)
                     val fn = m?.groupValues?.getOrNull(2)
                     if (!fn.isNullOrBlank()) {
-                        val signature = parseFunctionSignature(line) ?: FunctionSignature(fn, 0, null)
+                        val signature = parseFunctionSignature(line) ?: FunctionSignature(fn, emptyList(), null)
                         declarations += FunctionDeclaration(name = fn, exported = exported, signature = signature)
                     }
                 }
@@ -254,8 +254,24 @@ object Parser {
         val m = Regex("\\bfn\\s+(\\w+)\\s*\\(([^)]*)\\)\\s*(->\\s*([^\\s{]+))?").find(line) ?: return null
         val name = m.groupValues[1]
         val paramsRaw = m.groupValues[2].trim()
-        val paramCount = if (paramsRaw.isBlank()) 0 else paramsRaw.split(",").count { it.trim().isNotBlank() }
+        val paramTypes = if (paramsRaw.isBlank()) {
+            emptyList()
+        } else {
+            paramsRaw.split(",")
+                .mapNotNull { param ->
+                    val p = param.trim()
+                    if (p.isBlank()) {
+                        null
+                    } else {
+                        Regex(":\\s*([A-Za-z_][A-Za-z0-9_<>?]*)")
+                            .find(p)
+                            ?.groupValues
+                            ?.getOrNull(1)
+                            ?: "Any"
+                    }
+                }
+        }
         val returnType = m.groupValues.getOrNull(4)?.trim()?.ifBlank { null }
-        return FunctionSignature(name = name, paramCount = paramCount, returnType = returnType)
+        return FunctionSignature(name = name, paramTypes = paramTypes, returnType = returnType)
     }
 }

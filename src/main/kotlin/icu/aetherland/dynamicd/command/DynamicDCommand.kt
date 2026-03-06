@@ -356,7 +356,33 @@ class DynamicDCommand(
                 )
                 true
             }
+            "suite" -> {
+                val iterations = args.getOrNull(1)?.toIntOrNull() ?: 8
+                val scenario = args.getOrNull(2)?.let { parseScenario(it) } ?: BenchScenario.MIXED
+                val report = benchService.runSuite(iterations, scenario)
+                sender.sendMessage(
+                    "bench suite scenario=${report.scenario} modules=${report.moduleCount} iterations=${report.iterations} " +
+                        "warmAvg=${report.avgCompileWarmMs}ms reloadAvg=${report.avgReloadMs}ms " +
+                        "reloadOk=${"%.2f".format(report.avgReloadSuccessRate)} events/s=${"%.2f".format(report.avgEventThroughputPerSec)} " +
+                        "failed=${if (report.failedModules.isEmpty()) "none" else report.failedModules.joinToString(",")}",
+                )
+                true
+            }
             "report" -> {
+                if (args.getOrNull(1)?.equals("suite", ignoreCase = true) == true) {
+                    val suite = benchService.latestSuite()
+                    if (suite == null) {
+                        sender.sendMessage("No suite report yet, run /dd bench suite [iterations] [scenario]")
+                        return true
+                    }
+                    sender.sendMessage(
+                        "bench suite latest scenario=${suite.scenario} modules=${suite.moduleCount} iterations=${suite.iterations} " +
+                            "warmAvg=${suite.avgCompileWarmMs}ms reloadAvg=${suite.avgReloadMs}ms " +
+                            "reloadOk=${"%.2f".format(suite.avgReloadSuccessRate)} events/s=${"%.2f".format(suite.avgEventThroughputPerSec)} " +
+                            "failed=${if (suite.failedModules.isEmpty()) "none" else suite.failedModules.joinToString(",")}",
+                    )
+                    return true
+                }
                 val report = benchService.latest()
                 if (report == null) {
                     sender.sendMessage("No bench report yet, run /dd bench run <moduleId>")
@@ -462,12 +488,22 @@ class DynamicDCommand(
             return mutableListOf("sync").filter { it.startsWith(args[1], ignoreCase = true) }.toMutableList()
         }
         if (args.size == 2 && args[0].equals("bench", ignoreCase = true)) {
-            return mutableListOf("run", "report").filter { it.startsWith(args[1], ignoreCase = true) }.toMutableList()
+            return mutableListOf("run", "report", "suite")
+                .filter { it.startsWith(args[1], ignoreCase = true) }
+                .toMutableList()
         }
         if (args.size == 5 && args[0].equals("bench", ignoreCase = true) && args[1].equals("run", ignoreCase = true)) {
             return mutableListOf("standard", "mixed", "soak")
                 .filter { it.startsWith(args[4], ignoreCase = true) }
                 .toMutableList()
+        }
+        if (args.size == 4 && args[0].equals("bench", ignoreCase = true) && args[1].equals("suite", ignoreCase = true)) {
+            return mutableListOf("mixed", "soak", "standard")
+                .filter { it.startsWith(args[3], ignoreCase = true) }
+                .toMutableList()
+        }
+        if (args.size == 3 && args[0].equals("bench", ignoreCase = true) && args[1].equals("report", ignoreCase = true)) {
+            return mutableListOf("suite").filter { it.startsWith(args[2], ignoreCase = true) }.toMutableList()
         }
         return mutableListOf()
     }

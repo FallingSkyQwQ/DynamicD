@@ -17,7 +17,7 @@ data class UseDeclaration(
 
 data class FunctionSignature(
     val name: String,
-    val paramCount: Int,
+    val paramTypes: List<String>,
     val returnType: String?,
 )
 

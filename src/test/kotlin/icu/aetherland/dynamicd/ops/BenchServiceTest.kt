@@ -75,5 +75,13 @@ class BenchServiceTest {
         assertEquals(0.7, latest.agentSuccessRate)
         assertEquals(BenchScenario.SOAK, latest.scenario)
         assertEquals(3, latest.soakSamples)
+
+        val suite = service.runSuite(2, BenchScenario.MIXED)
+        assertEquals(1, suite.moduleCount)
+        assertEquals(BenchScenario.MIXED, suite.scenario)
+        val latestSuite = service.latestSuite()
+        assertNotNull(latestSuite)
+        assertEquals(1, latestSuite.moduleCount)
+        assertEquals(BenchScenario.MIXED, latestSuite.scenario)
     }
 }

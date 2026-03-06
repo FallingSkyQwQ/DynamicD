@@ -30,9 +30,21 @@ data class BenchReport(
     val failureSample: String?,
 )
 
+data class BenchSuiteReport(
+    val scenario: BenchScenario,
+    val iterations: Int,
+    val moduleCount: Int,
+    val avgCompileWarmMs: Long,
+    val avgReloadMs: Long,
+    val avgReloadSuccessRate: Double,
+    val avgEventThroughputPerSec: Double,
+    val failedModules: List<String>,
+)
+
 class BenchService(
     private val moduleManager: ModuleManager,
     private val storageFile: File,
+    private val suiteStorageFile: File = File(storageFile.parentFile ?: File("."), "latest-suite.report"),
     private val agentStatsProvider: () -> AgentRuntimeStats = { AgentRuntimeStats(0, 0) },
 ) {
     init {
@@ -154,6 +166,74 @@ class BenchService(
         )
     }
 
+    fun runSuite(iterations: Int, scenario: BenchScenario = BenchScenario.MIXED): BenchSuiteReport {
+        val safeIterations = max(1, iterations)
+        val moduleIds = moduleManager.listModules().map { it.id }.sorted()
+        if (moduleIds.isEmpty()) {
+            val empty = BenchSuiteReport(
+                scenario = scenario,
+                iterations = safeIterations,
+                moduleCount = 0,
+                avgCompileWarmMs = 0,
+                avgReloadMs = 0,
+                avgReloadSuccessRate = 0.0,
+                avgEventThroughputPerSec = 0.0,
+                failedModules = emptyList(),
+            )
+            writeSuite(empty)
+            return empty
+        }
+        val reports = moduleIds.map { moduleId -> run(moduleId, safeIterations, scenario) }
+        val failedModules = reports.filter { it.reloadSuccessRate < 1.0 }.map { it.moduleId }
+        val suite = BenchSuiteReport(
+            scenario = scenario,
+            iterations = safeIterations,
+            moduleCount = reports.size,
+            avgCompileWarmMs = reports.map { it.compileWarmAvgMs }.average().toLong(),
+            avgReloadMs = reports.map { it.reloadAvgMs }.average().toLong(),
+            avgReloadSuccessRate = reports.map { it.reloadSuccessRate }.average(),
+            avgEventThroughputPerSec = reports.map { it.eventThroughputPerSec }.average(),
+            failedModules = failedModules,
+        )
+        writeSuite(suite)
+        return suite
+    }
+
+    fun latestSuite(): BenchSuiteReport? {
+        if (!suiteStorageFile.exists()) return null
+        val values = suiteStorageFile.readLines()
+            .mapNotNull { line ->
+                val i = line.indexOf('=')
+                if (i < 0) null else line.substring(0, i) to line.substring(i + 1)
+            }
+            .toMap()
+        val scenario = values["scenario"]?.let {
+            runCatching { BenchScenario.valueOf(it) }.getOrNull()
+        } ?: return null
+        val iterations = values["iterations"]?.toIntOrNull() ?: return null
+        val moduleCount = values["moduleCount"]?.toIntOrNull() ?: return null
+        val avgCompileWarmMs = values["avgCompileWarmMs"]?.toLongOrNull() ?: return null
+        val avgReloadMs = values["avgReloadMs"]?.toLongOrNull() ?: return null
+        val avgReloadSuccessRate = values["avgReloadSuccessRate"]?.toDoubleOrNull() ?: return null
+        val avgEventThroughputPerSec = values["avgEventThroughputPerSec"]?.toDoubleOrNull() ?: return null
+        val failedModules = values["failedModules"]
+            ?.takeIf { it.isNotBlank() }
+            ?.split(",")
+            ?.map { it.trim() }
+            ?.filter { it.isNotBlank() }
+            ?: emptyList()
+        return BenchSuiteReport(
+            scenario = scenario,
+            iterations = iterations,
+            moduleCount = moduleCount,
+            avgCompileWarmMs = avgCompileWarmMs,
+            avgReloadMs = avgReloadMs,
+            avgReloadSuccessRate = avgReloadSuccessRate,
+            avgEventThroughputPerSec = avgEventThroughputPerSec,
+            failedModules = failedModules,
+        )
+    }
+
     private fun write(report: BenchReport) {
         storageFile.writeText(
             """
@@ -172,6 +252,21 @@ class BenchService(
             soakMidReloadMs=${report.soakMidReloadMs}
             soakEndReloadMs=${report.soakEndReloadMs}
             failureSample=${report.failureSample}
+            """.trimIndent() + "\n",
+        )
+    }
+
+    private fun writeSuite(report: BenchSuiteReport) {
+        suiteStorageFile.writeText(
+            """
+            scenario=${report.scenario.name}
+            iterations=${report.iterations}
+            moduleCount=${report.moduleCount}
+            avgCompileWarmMs=${report.avgCompileWarmMs}
+            avgReloadMs=${report.avgReloadMs}
+            avgReloadSuccessRate=${report.avgReloadSuccessRate}
+            avgEventThroughputPerSec=${report.avgEventThroughputPerSec}
+            failedModules=${report.failedModules.joinToString(",")}
             """.trimIndent() + "\n",
         )
     }

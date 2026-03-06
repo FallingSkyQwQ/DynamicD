@@ -181,8 +181,8 @@ object SemanticAnalyzer {
                 traitMethods.forEach { required ->
                     val actual = implMethods.firstOrNull { it.name == required.name } ?: return@forEach
                     val sameReturn = actual.returnType == required.returnType
-                    val sameArity = actual.paramCount == required.paramCount
-                    if (!sameReturn || !sameArity) {
+                    val sameParams = actual.paramTypes == required.paramTypes
+                    if (!sameReturn || !sameParams) {
                         mismatched += required.name
                     }
                 }
